@@ -5,6 +5,7 @@ import { RefreshButton } from "@/components/refresh-button";
 import Link from "next/link";
 import { ListOrdered } from "lucide-react";
 import { formatThai } from "@/lib/utils";
+import { DeleteQueueButton } from "@/components/delete-queue-button";
 
 export const dynamic = "force-dynamic";
 
@@ -64,11 +65,19 @@ export default async function QueuePage() {
                     <p className="text-sm font-medium break-words">
                       {item.product_name ?? "รอ AI วิเคราะห์..."}
                     </p>
+                    <div className="flex gap-3 text-xs text-muted-foreground mt-1">
+                      {item.price && <span>{item.price}</span>}
+                      {item.commission_rate && (
+                        <span className="text-green-500">
+                          ค่าคอม {item.commission_rate}
+                        </span>
+                      )}
+                    </div>
                     <a
                       href={item.shopee_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-blue-500 hover:underline break-all block"
+                      className="text-xs text-blue-500 hover:underline break-all block mt-1"
                     >
                       {item.shopee_url}
                     </a>
@@ -77,9 +86,12 @@ export default async function QueuePage() {
                       {formatThai(item.created_at)}
                     </p>
                   </div>
-                  <Badge className="hidden sm:inline-flex" variant={statusColors[item.status] ?? "outline"}>
-                    {item.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge className="hidden sm:inline-flex" variant={statusColors[item.status] ?? "outline"}>
+                      {item.status}
+                    </Badge>
+                    <DeleteQueueButton id={item.id} />
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -144,9 +156,12 @@ export default async function QueuePage() {
                         </p>
                       )}
                     </div>
-                    <Badge className="hidden sm:inline-flex" variant={statusColors[item.status] ?? "outline"}>
-                      {item.status}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge className="hidden sm:inline-flex" variant={statusColors[item.status] ?? "outline"}>
+                        {item.status}
+                      </Badge>
+                      <DeleteQueueButton id={item.id} />
+                    </div>
                   </div>
                 </CardContent>
               </Card>

@@ -72,22 +72,23 @@ export async function runPipeline() {
     let price = item.price ?? "";
     let commissionRate = item.commission_rate ?? "";
 
-    if (item.image_url) {
+    // Skip vision if data was already analyzed at upload time
+    if (!item.product_name && item.image_url) {
       const visionResult = await analyzeProductImage(item.image_url);
       productName = visionResult.product_name;
       price = visionResult.price;
       commissionRate = visionResult.commission_rate;
-    }
 
-    // Save vision results back to queue
-    await supabase
-      .from("product_queue")
-      .update({
-        product_name: productName,
-        price,
-        commission_rate: commissionRate,
-      })
-      .eq("id", item.id);
+      // Save vision results back to queue
+      await supabase
+        .from("product_queue")
+        .update({
+          product_name: productName,
+          price,
+          commission_rate: commissionRate,
+        })
+        .eq("id", item.id);
+    }
 
     // Parse numeric values once
     const numericPrice = parsePrice(price);
