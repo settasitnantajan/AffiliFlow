@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   Film, ListOrdered, ShoppingBag, Zap, Flame,
 } from "lucide-react";
+import { formatThai, formatThaiShort } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -55,12 +56,7 @@ export default async function DashboardPage() {
 
   const lastRunTime = lastSuccessRun?.[0]?.completed_at;
   const lastRunLabel = lastRunTime
-    ? new Date(lastRunTime).toLocaleString("th-TH", {
-        day: "numeric",
-        month: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
+    ? formatThaiShort(lastRunTime)
     : "ยังไม่เคยรัน";
 
   const stats = [
@@ -167,12 +163,7 @@ export default async function DashboardPage() {
                         {item.product_name ?? "รอ AI วิเคราะห์..."}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(item.created_at).toLocaleString("th-TH", {
-                          day: "numeric",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {formatThaiShort(item.created_at)}
                       </p>
                     </div>
                     <Badge variant="outline">รอคิว</Badge>
@@ -216,12 +207,7 @@ export default async function DashboardPage() {
                   <div key={v.id} className="space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs text-muted-foreground">
-                        {new Date(v.created_at).toLocaleString("th-TH", {
-                          day: "numeric",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {formatThaiShort(v.created_at)}
                       </p>
                       <Badge
                         variant={
@@ -290,12 +276,7 @@ export default async function DashboardPage() {
                       {run.status}
                     </span>
                     <span className="text-sm">
-                      {new Date(run.started_at).toLocaleString("th-TH", {
-                        day: "numeric",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {formatThaiShort(run.started_at)}
                     </span>
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">

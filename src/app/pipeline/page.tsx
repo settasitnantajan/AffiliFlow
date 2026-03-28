@@ -6,6 +6,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { PipelineRunner } from "@/components/pipeline-runner";
 import { Zap } from "lucide-react";
+import { formatThai } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,7 @@ export default async function PipelinePage() {
                     {runs.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="text-sm">
-                          {new Date(r.started_at).toLocaleString("th-TH")}
+                          {formatThai(r.started_at)}
                         </TableCell>
                         <TableCell>
                           <StatusBadge status={r.status} />
@@ -78,7 +79,7 @@ export default async function PipelinePage() {
                         <TableCell>{r.videos_produced}</TableCell>
                         <TableCell className="text-sm">
                           {r.completed_at
-                            ? new Date(r.completed_at).toLocaleString("th-TH")
+                            ? formatThai(r.completed_at)
                             : "-"}
                         </TableCell>
                         <TableCell className="text-red-400 text-sm max-w-[150px] truncate">
@@ -96,7 +97,7 @@ export default async function PipelinePage() {
                   <div key={r.id} className="bg-muted/50 rounded-lg p-3 space-y-2 text-sm">
                     <div className="flex items-center justify-between">
                       <span className="font-medium">
-                        {new Date(r.started_at).toLocaleString("th-TH")}
+                        {formatThai(r.started_at)}
                       </span>
                       <StatusBadge status={r.status} />
                     </div>
@@ -112,7 +113,7 @@ export default async function PipelinePage() {
                     </div>
                     {r.completed_at && (
                       <p className="text-xs text-muted-foreground">
-                        เสร็จ: {new Date(r.completed_at).toLocaleString("th-TH")}
+                        เสร็จ: {formatThai(r.completed_at)}
                       </p>
                     )}
                     {r.error_log && (

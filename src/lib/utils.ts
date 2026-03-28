@@ -12,3 +12,21 @@ export function getErrorMessage(e: unknown): string {
 export function parsePrice(str: string): number {
   return parseFloat(str.replace(/[^0-9.]/g, "")) || 0;
 }
+
+/** Format date to Thai timezone (Asia/Bangkok) */
+export function formatThai(date: string | Date, options?: Intl.DateTimeFormatOptions): string {
+  return new Date(date).toLocaleString("th-TH", {
+    timeZone: "Asia/Bangkok",
+    ...options,
+  });
+}
+
+/** Short Thai date: "28 มี.ค. 15:30" */
+export function formatThaiShort(date: string | Date): string {
+  return formatThai(date, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}

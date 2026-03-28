@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { RefreshButton } from "@/components/refresh-button";
 import Link from "next/link";
 import { ListOrdered } from "lucide-react";
+import { formatThai } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -73,7 +74,7 @@ export default async function QueuePage() {
                     </a>
                     <p className="text-xs text-muted-foreground mt-1">
                       เพิ่มเมื่อ{" "}
-                      {new Date(item.created_at).toLocaleString("th-TH")}
+                      {formatThai(item.created_at)}
                     </p>
                   </div>
                   <Badge className="hidden sm:inline-flex" variant={statusColors[item.status] ?? "outline"}>
@@ -139,7 +140,7 @@ export default async function QueuePage() {
                       {item.processed_at && (
                         <p className="text-xs text-muted-foreground mt-1">
                           ประมวลผลเมื่อ{" "}
-                          {new Date(item.processed_at).toLocaleString("th-TH")}
+                          {formatThai(item.processed_at)}
                         </p>
                       )}
                     </div>

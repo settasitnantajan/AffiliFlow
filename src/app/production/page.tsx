@@ -4,6 +4,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { formatThai } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,7 @@ export default async function ProductionPage() {
                       {p.error_log ?? "-"}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
-                      {new Date(p.created_at).toLocaleString("th-TH")}
+                      {formatThai(p.created_at)}
                     </TableCell>
                   </TableRow>
                 ))}

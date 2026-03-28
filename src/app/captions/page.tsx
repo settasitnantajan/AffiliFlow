@@ -1,6 +1,7 @@
 import { createServerSupabase } from "@/lib/supabase-server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { formatThai } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export default async function CaptionsPage() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm">
-                    {new Date(c.created_at).toLocaleString("th-TH")}
+                    {formatThai(c.created_at)}
                   </CardTitle>
                   <Badge variant="outline">{c.ai_model}</Badge>
                 </div>

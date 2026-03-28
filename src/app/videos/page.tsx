@@ -6,6 +6,7 @@ import { DownloadButton } from "@/components/download-button";
 import { CopyAllButton } from "@/components/copy-all-button";
 import Link from "next/link";
 import { Film } from "lucide-react";
+import { formatThai } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,7 @@ export default async function VideosPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm">
-                      {new Date(v.created_at).toLocaleString("th-TH")}
+                      {formatThai(v.created_at)}
                     </CardTitle>
                     <Badge
                       variant={v.status === "posted" ? "default" : "secondary"}
