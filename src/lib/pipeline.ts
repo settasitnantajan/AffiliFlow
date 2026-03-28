@@ -212,7 +212,6 @@ export async function runPipeline() {
     const productInfos = (savedProducts ?? []).slice(0, 5).map((p) => ({
       name: p.name,
       price: p.price,
-      commission_rate: p.commission_rate,
     }));
 
     const captionText = await generateCaption(productInfos);
