@@ -1,65 +1,97 @@
-import Image from "next/image";
+import { createServerSupabase } from "@/lib/supabase-server";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage() {
+  const supabase = createServerSupabase();
+
+  const [
+    { count: pipelineCount },
+    { count: trendsCount },
+    { count: productsCount },
+    { count: videosCount },
+  ] = await Promise.all([
+    supabase.from("pipeline_runs").select("*", { count: "exact", head: true }),
+    supabase.from("trend_searches").select("*", { count: "exact", head: true }),
+    supabase.from("products").select("*", { count: "exact", head: true }),
+    supabase.from("video_results").select("*", { count: "exact", head: true }),
+  ]);
+
+  const stats = [
+    { title: "Pipeline Runs", value: pipelineCount ?? 0, icon: "⚡" },
+    { title: "Trends Found", value: trendsCount ?? 0, icon: "🔥" },
+    { title: "Products Analyzed", value: productsCount ?? 0, icon: "🛍️" },
+    { title: "Videos Ready", value: videosCount ?? 0, icon: "🎬" },
+  ];
+
+  const { data: recentRuns } = await supabase
+    .from("pipeline_runs")
+    .select("*")
+    .order("started_at", { ascending: false })
+    .limit(5);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div>
+      <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {stats.map((stat) => (
+          <Card key={stat.title}>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {stat.title}
+              </CardTitle>
+              <span className="text-2xl">{stat.icon}</span>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{stat.value}</div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Pipeline Runs</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {recentRuns && recentRuns.length > 0 ? (
+            <div className="space-y-3">
+              {recentRuns.map((run) => (
+                <div
+                  key={run.id}
+                  className="flex items-center justify-between border-b pb-2 last:border-0"
+                >
+                  <div>
+                    <span className="text-sm font-medium">
+                      {new Date(run.started_at).toLocaleString("th-TH")}
+                    </span>
+                    <span className="text-xs text-muted-foreground ml-2">
+                      Step: {run.step_current ?? "-"}
+                    </span>
+                  </div>
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full ${
+                      run.status === "success"
+                        ? "bg-green-100 text-green-700"
+                        : run.status === "failed"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-yellow-100 text-yellow-700"
+                    }`}
+                  >
+                    {run.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              No pipeline runs yet. Set up cron-job.org to trigger /api/pipeline/run
+            </p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
