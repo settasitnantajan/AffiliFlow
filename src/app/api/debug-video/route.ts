@@ -51,7 +51,13 @@ export async function GET() {
     const downloadUrl = mp4s[0].url;
     results.push(`Downloading: ${mp4s[0].quality} ${mp4s[0].sizeText}`);
 
-    const videoRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(60000) });
+    const videoRes = await fetch(downloadUrl, {
+      signal: AbortSignal.timeout(60000),
+      headers: {
+        Referer: "https://www.youtube.com/",
+        Origin: "https://www.youtube.com",
+      },
+    });
     if (!videoRes.ok) {
       results.push(`Download FAILED: ${videoRes.status}`);
       return NextResponse.json({ results });

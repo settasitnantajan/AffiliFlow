@@ -77,7 +77,13 @@ async function getDownloadUrl(videoId: string): Promise<string | null> {
 // Download video buffer from URL
 async function downloadVideoBuffer(url: string): Promise<Buffer | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(60000) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(60000),
+      headers: {
+        Referer: "https://www.youtube.com/",
+        Origin: "https://www.youtube.com",
+      },
+    });
     if (!res.ok) return null;
     const buffer = Buffer.from(await res.arrayBuffer());
     if (buffer.length < 10000) return null;
