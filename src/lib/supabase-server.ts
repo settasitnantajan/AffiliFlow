@@ -1,9 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Server-side Supabase client (for API routes)
+// Server-only Supabase client (keys never exposed to browser)
 export function createServerSupabase() {
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!
   );
 }
