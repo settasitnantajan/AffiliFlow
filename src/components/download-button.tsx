@@ -27,8 +27,14 @@ export function DownloadButton({ url }: { url: string }) {
   };
 
   return (
-    <Button variant="outline" size="sm" onClick={handleDownload} disabled={downloading}>
-      {downloading ? "Downloading..." : "Download Video"}
+    <Button
+      variant="outline"
+      size="default"
+      onClick={handleDownload}
+      disabled={downloading}
+      className="w-full sm:w-auto active:scale-95 transition-transform"
+    >
+      {downloading ? "กำลังดาวน์โหลด..." : "ดาวน์โหลดวีดีโอ"}
     </Button>
   );
 }

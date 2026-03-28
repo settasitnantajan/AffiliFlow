@@ -38,13 +38,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[oklch(0.1_0_0)]">
-      <Card className="w-full max-w-sm border-white/10 bg-[oklch(0.18_0_0)]">
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold text-white">
+          <CardTitle className="text-2xl font-bold">
             AffiliFlow
           </CardTitle>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-muted-foreground">
             Shopee Video Automation
           </p>
         </CardHeader>
@@ -53,10 +53,9 @@ export default function LoginPage() {
             <div>
               <Input
                 type="password"
-                placeholder="Enter password"
+                placeholder="ใส่รหัสผ่าน"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
                 autoFocus
               />
             </div>
@@ -65,10 +64,10 @@ export default function LoginPage() {
             )}
             <Button
               type="submit"
-              className="w-full bg-white text-black hover:bg-gray-200"
+              className="w-full"
               disabled={loading}
             >
-              {loading ? "Logging in..." : "Login"}
+              {loading ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
             </Button>
           </form>
         </CardContent>

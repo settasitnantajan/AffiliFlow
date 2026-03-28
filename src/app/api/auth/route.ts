@@ -1,12 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
+import { signAuthToken } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
-  const { password } = await req.json();
-  const correctPassword = process.env.AUTH_PASSWORD ?? "affiliflow2026";
+  let body: { password?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
-  if (password === correctPassword) {
+  const correctPassword = process.env.AUTH_PASSWORD;
+  if (!correctPassword) {
+    return NextResponse.json(
+      { error: "AUTH_PASSWORD not configured" },
+      { status: 500 }
+    );
+  }
+
+  if (body.password === correctPassword) {
     const response = NextResponse.json({ success: true });
-    response.cookies.set("auth", "authenticated", {
+    response.cookies.set("auth", await signAuthToken(), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",

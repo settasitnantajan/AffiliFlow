@@ -1,55 +1,25 @@
-import { createServerSupabase } from "@/lib/supabase-server";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
+import { TrendsContent } from "./trends-content";
 
-export const dynamic = "force-dynamic";
-
-export default async function TrendsPage() {
-  const supabase = createServerSupabase();
-  const { data: trends } = await supabase
-    .from("trend_searches")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(50);
-
+export default function TrendsPage() {
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Step 1: Trend Research</h1>
-      <Card>
-        <CardHeader>
-          <CardTitle>Search History</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {trends && trends.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Keyword</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Score</TableHead>
-                  <TableHead>Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {trends.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="font-medium">{t.keyword}</TableCell>
-                    <TableCell>{t.source ?? "-"}</TableCell>
-                    <TableCell>{t.trending_score ?? "-"}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {new Date(t.created_at).toLocaleString("th-TH")}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <p className="text-muted-foreground text-sm">No trends yet.</p>
-          )}
-        </CardContent>
-      </Card>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">เทรนด์สินค้า</h1>
+          <p className="text-muted-foreground text-sm">
+            ข้อมูลจาก Google Trends — สินค้าที่คนไทยค้นหามากที่สุด
+          </p>
+        </div>
+        <a
+          href="https://trends.google.co.th/trending?geo=TH"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-blue-400 hover:underline shrink-0"
+        >
+          เปิด Google Trends
+        </a>
+      </div>
+      <TrendsContent />
     </div>
   );
 }

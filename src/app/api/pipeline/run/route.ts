@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runPipeline } from "@/lib/pipeline";
+import { getErrorMessage } from "@/lib/utils";
 
 // cron-job.org will POST to this endpoint daily
 export async function POST() {
@@ -7,9 +8,8 @@ export async function POST() {
     const result = await runPipeline();
     return NextResponse.json(result);
   } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      { success: false, error: errorMsg },
+      { success: false, error: getErrorMessage(e) },
       { status: 500 }
     );
   }

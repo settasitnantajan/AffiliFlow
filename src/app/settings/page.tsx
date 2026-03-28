@@ -12,17 +12,17 @@ export default function SettingsPage() {
           <CardContent className="space-y-3 text-sm">
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Supabase</span>
-              <span className="text-green-600">Connected</span>
+              <span className="text-green-400">Connected</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Groq API (Llama 3.3)</span>
-              <span className={process.env.GROQ_API_KEY ? "text-green-600" : "text-red-600"}>
+              <span className={process.env.GROQ_API_KEY ? "text-green-400" : "text-red-400"}>
                 {process.env.GROQ_API_KEY ? "Configured" : "Not set"}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Pexels API</span>
-              <span className={process.env.PEXELS_API_KEY ? "text-green-600" : "text-yellow-600"}>
+              <span className={process.env.PEXELS_API_KEY ? "text-green-400" : "text-yellow-400"}>
                 {process.env.PEXELS_API_KEY ? "Configured" : "Optional - not set"}
               </span>
             </div>
@@ -40,7 +40,7 @@ export default function SettingsPage() {
                 href="https://console.cron-job.org/jobs"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-500 hover:underline"
+                className="text-blue-400 hover:underline"
               >
                 cron-job.org
               </a>

@@ -1,249 +1,195 @@
 import { createServerSupabase } from "./supabase-server";
-import { findTrends } from "./scraper/trend-finder";
-import { searchShopeeProducts } from "./scraper/shopee-products";
-import { findVideoSource } from "./scraper/video-finder";
-import { downloadVideo } from "./video/downloader";
-import { editVideo } from "./video/editor";
-import { getStockVideo } from "./video/stock";
-import { getAndUploadStockVideo } from "./video/stock-upload";
+import { analyzeProductImage } from "./ai/vision";
+import { searchAndDownloadYouTube } from "./video/youtube-download";
 import { generateCaption } from "./ai/caption";
 import { generateHashtags } from "./ai/hashtag";
-import * as fs from "fs";
+
+import { parsePrice, getErrorMessage } from "./utils";
+
+// Helper: run with timeout (clears timer on success to prevent leak)
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms);
+    }),
+  ]);
+}
 
 export async function runPipeline() {
   const supabase = createServerSupabase();
 
-  // Create pipeline run
+  // Create pipeline run with progress
   const { data: pipelineRun, error: runError } = await supabase
     .from("pipeline_runs")
-    .insert({ status: "running", step_current: "trend" })
+    .insert({ status: "running", step_current: "queue", progress: 0 })
     .select()
     .single();
 
-  if (runError || !pipelineRun) throw new Error(`Pipeline init failed: ${runError?.message}`);
+  if (runError || !pipelineRun)
+    throw new Error(`Pipeline init failed: ${runError?.message}`);
   const runId = pipelineRun.id;
 
+  let queueItem: { id: string; product_name?: string; price?: string; commission_rate?: string; image_url?: string; shopee_url: string } | null = null;
+
   try {
-    // ========== Step 1: Trend Research ==========
-    await supabase.from("pipeline_runs").update({ step_current: "trend" }).eq("id", runId);
+    // Helper to update progress
+    const updateProgress = async (step: string, progress: number) => {
+      await supabase
+        .from("pipeline_runs")
+        .update({ step_current: step, progress })
+        .eq("id", runId);
+    };
 
-    const trends = await findTrends();
+    // ========== Step 1: Pick from queue (FIFO) — 10% ==========
+    await updateProgress("queue", 10);
 
-    // Save trends
-    if (trends.length > 0) {
-      await supabase.from("trend_searches").insert(
-        trends.map((t) => ({ ...t, pipeline_run_id: runId }))
-      );
+    const { data: queueData, error: queueError } = await supabase
+      .from("product_queue")
+      .select("*")
+      .eq("status", "queued")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (queueError || !queueData) {
+      throw new Error("ไม่มีสินค้าในคิว — ไปหน้า Upload เพื่อเพิ่มสินค้า");
+    }
+    queueItem = queueData;
+    const item = queueItem!;
+
+    // Mark as processing
+    await supabase
+      .from("product_queue")
+      .update({ status: "processing" })
+      .eq("id", item.id);
+
+    // ========== Step 2: Groq Vision — read screenshot — 20% ==========
+    await updateProgress("vision", 20);
+
+    let productName = item.product_name ?? "สินค้า Shopee";
+    let price = item.price ?? "";
+    let commissionRate = item.commission_rate ?? "";
+
+    if (item.image_url) {
+      const visionResult = await analyzeProductImage(item.image_url);
+      productName = visionResult.product_name;
+      price = visionResult.price;
+      commissionRate = visionResult.commission_rate;
     }
 
+    // Save vision results back to queue
     await supabase
-      .from("pipeline_runs")
-      .update({ trends_found: trends.length })
-      .eq("id", runId);
+      .from("product_queue")
+      .update({
+        product_name: productName,
+        price,
+        commission_rate: commissionRate,
+      })
+      .eq("id", item.id);
 
-    // Pick top keyword
-    const topKeyword = trends[0]?.keyword ?? "สินค้ายอดนิยม";
+    // Parse numeric values once
+    const numericPrice = parsePrice(price);
+    const numericCommission = parsePrice(commissionRate);
 
-    // ========== Step 2: Product Analysis ==========
-    await supabase.from("pipeline_runs").update({ step_current: "product" }).eq("id", runId);
-
-    const products = await searchShopeeProducts(topKeyword);
-
-    // Save products with rank
-    const productsToInsert = products.map((p, i) => ({
-      ...p,
-      pipeline_run_id: runId,
-      rank: i + 1,
-      selected: i === 0, // first product is the main one
-    }));
-
-    const { data: savedProducts } = await supabase
+    // Also save to products table
+    const { data: savedProduct } = await supabase
       .from("products")
-      .insert(productsToInsert)
-      .select();
-
-    await supabase
-      .from("pipeline_runs")
-      .update({ products_found: products.length })
-      .eq("id", runId);
-
-    const mainProduct = savedProducts?.[0];
-    if (!mainProduct) throw new Error("No products found");
-
-    // ========== Step 3: Find Video Source ==========
-    await supabase.from("pipeline_runs").update({ step_current: "source" }).eq("id", runId);
-
-    const videoSource = await findVideoSource(topKeyword);
-
-    let sourceId: string | null = null;
-    if (videoSource) {
-      const { data: savedSource } = await supabase
-        .from("video_sources")
-        .insert({
-          pipeline_run_id: runId,
-          product_id: mainProduct.id,
-          source_url: videoSource.source_url,
-          source_type: videoSource.source_type,
-          status: "found",
-        })
-        .select()
-        .single();
-      sourceId = savedSource?.id ?? null;
-    }
-
-    // ========== Step 4: Video Production ==========
-    await supabase.from("pipeline_runs").update({ step_current: "production" }).eq("id", runId);
-
-    let editedFilePath: string | null = null;
-    let productionId: string | null = null;
-
-    if (videoSource) {
-      // Download
-      const downloaded = await downloadVideo(
-        videoSource.source_url,
-        videoSource.source_type
-      );
-
-      if (downloaded) {
-        // Update source status
-        if (sourceId) {
-          await supabase
-            .from("video_sources")
-            .update({ status: "downloaded" })
-            .eq("id", sourceId);
-        }
-
-        // Edit: cut to 30s + overlay
-        const edited = await editVideo(
-          downloaded.filePath,
-          mainProduct.name,
-          mainProduct.price
-        );
-
-        if (edited) {
-          editedFilePath = edited.filePath;
-        }
-
-        // Clean up source file
-        try { fs.unlinkSync(downloaded.filePath); } catch {}
-      }
-    }
-
-    // Fallback: try stock video
-    if (!editedFilePath) {
-      const stockPath = await getStockVideo(topKeyword);
-      if (stockPath) {
-        const edited = await editVideo(
-          stockPath,
-          mainProduct.name,
-          mainProduct.price
-        );
-        if (edited) editedFilePath = edited.filePath;
-        try { fs.unlinkSync(stockPath); } catch {}
-      }
-    }
-
-    // Upload to Supabase Storage
-    let videoUrl = "";
-    if (editedFilePath && fs.existsSync(editedFilePath)) {
-      const fileName = `video_${Date.now()}.mp4`;
-      const fileBuffer = fs.readFileSync(editedFilePath);
-
-      const { error: uploadError } = await supabase.storage
-        .from("videos")
-        .upload(fileName, fileBuffer, {
-          contentType: "video/mp4",
-          upsert: false,
-        });
-
-      if (!uploadError) {
-        const { data: publicUrl } = supabase.storage
-          .from("videos")
-          .getPublicUrl(fileName);
-        videoUrl = publicUrl.publicUrl;
-      }
-
-      // Save production record
-      const { data: savedProd } = await supabase
-        .from("video_productions")
-        .insert({
-          pipeline_run_id: runId,
-          source_id: sourceId,
-          output_url: videoUrl,
-          duration: 30,
-          status: videoUrl ? "done" : "failed",
-          error_log: uploadError?.message ?? null,
-        })
-        .select()
-        .single();
-
-      productionId = savedProd?.id ?? null;
-
-      // Clean up
-      try { fs.unlinkSync(editedFilePath); } catch {}
-    }
-
-    // Serverless fallback: Pexels stock video → Supabase Storage directly
-    if (!videoUrl) {
-      const stockUrl = await getAndUploadStockVideo(topKeyword);
-      if (stockUrl) videoUrl = stockUrl;
-    }
-
-    // Save production record
-    {
-      const { data: savedProd } = await supabase
-        .from("video_productions")
-        .insert({
-          pipeline_run_id: runId,
-          source_id: sourceId,
-          output_url: videoUrl || null,
-          duration: 30,
-          status: videoUrl ? "done" : "failed",
-          error_log: videoUrl ? null : "No video source available",
-        })
-        .select()
-        .single();
-      productionId = savedProd?.id ?? null;
-    }
-
-    // ========== Step 5: AI Caption + Hashtag ==========
-    await supabase.from("pipeline_runs").update({ step_current: "caption" }).eq("id", runId);
-
-    const productInfos = (savedProducts ?? []).slice(0, 5).map((p) => ({
-      name: p.name,
-      price: p.price,
-    }));
-
-    const captionText = await generateCaption(productInfos);
-    const hashtags = await generateHashtags(topKeyword, mainProduct.name);
-
-    const { data: savedCaption } = await supabase
-      .from("captions")
       .insert({
         pipeline_run_id: runId,
-        production_id: productionId,
-        caption_text: captionText,
-        hashtags,
-        ai_model: "llama-3.3-70b",
+        name: productName,
+        price: numericPrice,
+        commission_rate: numericCommission,
+        product_url: item.shopee_url,
+        rank: 1,
+        selected: true,
       })
       .select()
       .single();
 
-    // ========== Step 6: Save Final Result ==========
-    await supabase.from("pipeline_runs").update({ step_current: "done" }).eq("id", runId);
+    await supabase
+      .from("pipeline_runs")
+      .update({ products_found: 1 })
+      .eq("id", runId);
 
-    const productLinks = (savedProducts ?? []).slice(0, 5).map((p) => ({
-      rank: p.rank,
-      name: p.name,
-      url: p.product_url,
-      price: p.price,
-      commission_rate: p.commission_rate,
-    }));
+    // ========== Step 3: YouTube video (with timeout + Pexels fallback) — 40% ==========
+    await updateProgress("video", 40);
+
+    let videoUrl: string | null = null;
+    try {
+      videoUrl = await withTimeout(searchAndDownloadYouTube(productName), 120000);
+    } catch (e) {
+      console.warn("YouTube download failed:", e instanceof Error ? e.message : e);
+    }
+
+    // Save video source
+    const { data: savedSource } = await supabase
+      .from("video_sources")
+      .insert({
+        pipeline_run_id: runId,
+        product_id: savedProduct?.id ?? null,
+        source_url: videoUrl ?? "",
+        source_type: "youtube",
+        status: videoUrl ? "downloaded" : "failed",
+      })
+      .select()
+      .single();
+
+    // Save production record
+    const { data: savedProd } = await supabase
+      .from("video_productions")
+      .insert({
+        pipeline_run_id: runId,
+        source_id: savedSource?.id ?? null,
+        output_url: videoUrl,
+        duration: 30,
+        status: videoUrl ? "done" : "failed",
+        error_log: videoUrl ? null : "No YouTube video found",
+      })
+      .select()
+      .single();
+
+    const productionId = savedProd?.id ?? null;
+
+    // ========== Step 4: AI Caption + Hashtag — 70% ==========
+    await updateProgress("caption", 70);
+
+    const [captionText, hashtags] = await Promise.all([
+      generateCaption([
+        {
+          name: productName,
+          price: numericPrice,
+          shopeeUrl: item.shopee_url,
+        },
+      ]),
+      generateHashtags(productName, productName),
+    ]);
+
+    await supabase.from("captions").insert({
+      pipeline_run_id: runId,
+      production_id: productionId,
+      caption_text: captionText,
+      hashtags,
+      ai_model: "llama-3.3-70b",
+    });
+
+    // ========== Step 5: Save Final Result — 90% ==========
+    await updateProgress("saving", 90);
+
+    const productLinks = [
+      {
+        rank: 1,
+        name: productName,
+        url: item.shopee_url,
+        price,
+        commission_rate: commissionRate,
+      },
+    ];
 
     await supabase.from("video_results").insert({
       pipeline_run_id: runId,
       production_id: productionId,
-      caption_id: savedCaption?.id ?? null,
       video_url: videoUrl,
       caption_text: captionText,
       hashtags,
@@ -251,11 +197,22 @@ export async function runPipeline() {
       status: "ready",
     });
 
-    // Mark pipeline as success
+    // Mark queue item as done
+    await supabase
+      .from("product_queue")
+      .update({
+        status: "done",
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", item.id);
+
+    // Mark pipeline as success — 100%
     await supabase
       .from("pipeline_runs")
       .update({
         status: "success",
+        step_current: "done",
+        progress: 100,
         videos_produced: videoUrl ? 1 : 0,
         completed_at: new Date().toISOString(),
       })
@@ -264,16 +221,24 @@ export async function runPipeline() {
     return {
       success: true,
       runId,
-      keyword: topKeyword,
-      trendsFound: trends.length,
-      productsFound: products.length,
+      productName,
+      price,
+      commissionRate,
       videoUrl,
       captionPreview: captionText.slice(0, 100),
       hashtagCount: hashtags.length,
-      productLinks: productLinks.length,
     };
   } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : String(e);
+    const errorMsg = getErrorMessage(e);
+
+    // Mark only this queue item as failed (not all processing items)
+    if (queueItem?.id) {
+      await supabase
+        .from("product_queue")
+        .update({ status: "failed" })
+        .eq("id", queueItem.id);
+    }
+
     await supabase
       .from("pipeline_runs")
       .update({

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
-export function CopyButton({ text, label }: { text: string; label?: string }) {
+export function CopyAllButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -14,12 +14,12 @@ export function CopyButton({ text, label }: { text: string; label?: string }) {
 
   return (
     <Button
-      variant="outline"
-      size="default"
+      variant="default"
+      size="lg"
       onClick={handleCopy}
-      className="w-full sm:w-auto active:scale-95 transition-transform"
+      className="w-full text-base active:scale-[0.98] transition-transform"
     >
-      {copied ? "คัดลอกแล้ว ✓" : label ?? "คัดลอก"}
+      {copied ? "คัดลอกแล้ว ✓" : "คัดลอกทั้งหมด (แคปชั่น + ลิงก์)"}
     </Button>
   );
 }

@@ -3,6 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/copy-button";
 import { DownloadButton } from "@/components/download-button";
+import { CopyAllButton } from "@/components/copy-all-button";
+import Link from "next/link";
+import { Film } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +13,8 @@ interface ProductLink {
   rank: number;
   name: string;
   url: string;
-  price: number;
-  commission_rate: number;
+  price: string;
+  commission_rate: string;
 }
 
 export default async function VideosPage() {
@@ -24,13 +27,16 @@ export default async function VideosPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Step 6: Videos Ready</h1>
+      <h1 className="text-2xl font-bold mb-6">วีดีโอพร้อมโพสต์</h1>
       <div className="space-y-6">
         {videos && videos.length > 0 ? (
           videos.map((v) => {
-            // รวม caption + hashtag เป็นก้อนเดียว
             const hashtagsText = v.hashtags?.join(" ") ?? "";
             const fullCaption = `${v.caption_text ?? ""}\n\n${hashtagsText}`.trim();
+
+            const links = (v.product_links as ProductLink[]) ?? [];
+            const linksText = links.map((p) => `${p.name}\n${p.url}`).join("\n\n");
+            const megaCopyText = [fullCaption, linksText].filter(Boolean).join("\n\n---\n\n");
 
             return (
               <Card key={v.id}>
@@ -47,6 +53,9 @@ export default async function VideosPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {/* Mega copy button */}
+                  <CopyAllButton text={megaCopyText} />
+
                   {/* Video + Download */}
                   <div>
                     {v.video_url ? (
@@ -63,10 +72,10 @@ export default async function VideosPage() {
                     )}
                   </div>
 
-                  {/* Caption + Hashtags รวมกัน */}
-                  <div>
+                  {/* Caption + Hashtags */}
+                  <div className="border-l-2 border-primary/30 pl-3">
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-sm font-medium">Caption + Hashtags:</p>
+                      <p className="text-sm font-medium">แคปชั่น + แฮชแท็ก:</p>
                       <CopyButton text={fullCaption} />
                     </div>
                     <div className="bg-muted p-3 rounded-lg">
@@ -81,41 +90,42 @@ export default async function VideosPage() {
                     </div>
                   </div>
 
-                  {/* Product Links */}
-                  <div>
+                  {/* Separator */}
+                  <div className="border-t border-border" />
+
+                  {/* Product Link + Shopee URL */}
+                  <div className="border-l-2 border-green-500/30 pl-3">
                     <p className="text-sm font-medium mb-2">
-                      Product Links ({(v.product_links as ProductLink[])?.length ?? 0}):
+                      สินค้า ({links.length}):
                     </p>
                     <div className="space-y-2">
-                      {(v.product_links as ProductLink[])?.map(
-                        (p: ProductLink, i: number) => (
-                          <div
-                            key={i}
-                            className="flex items-center justify-between bg-muted/50 p-2 rounded-lg text-sm"
-                          >
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline">#{p.rank}</Badge>
-                              <span className="font-medium">{p.name}</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span>฿{p.price?.toLocaleString()}</span>
-                              <span className="text-green-600 font-medium">
-                                {p.commission_rate}%
-                              </span>
-                              <a
-                                href={p.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-500 hover:underline"
-                              >
-                                View
-                              </a>
+                      {links.map((p, i) => (
+                        <div
+                          key={i}
+                          className="bg-muted/50 p-2 rounded-lg text-sm space-y-1"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                            <span className="font-medium break-words">{p.name}</span>
+                            <div className="flex items-center gap-3 shrink-0 text-xs sm:text-sm">
+                              {p.price && <span>{p.price}</span>}
+                              {p.commission_rate && (
+                                <span className="text-green-500 font-medium">
+                                  {p.commission_rate}
+                                </span>
+                              )}
                             </div>
                           </div>
-                        )
-                      ) ?? (
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs text-blue-400 break-all flex-1 select-all">
+                              {p.url}
+                            </p>
+                            <CopyButton text={p.url} />
+                          </div>
+                        </div>
+                      ))}
+                      {links.length === 0 && (
                         <p className="text-muted-foreground text-sm">
-                          No product links
+                          ไม่มีลิงก์สินค้า
                         </p>
                       )}
                     </div>
@@ -126,10 +136,17 @@ export default async function VideosPage() {
           })
         ) : (
           <Card>
-            <CardContent className="py-6">
-              <p className="text-muted-foreground text-sm">
-                No videos ready yet. Run the pipeline first.
+            <CardContent className="py-8 text-center">
+              <Film className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+              <p className="text-muted-foreground text-sm mb-4">
+                ยังไม่มีวีดีโอ — อัพโหลดสินค้าแล้วรัน Pipeline เลย
               </p>
+              <Link
+                href="/upload"
+                className="inline-flex items-center justify-center rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
+                ไปหน้าอัพโหลด
+              </Link>
             </CardContent>
           </Card>
         )}

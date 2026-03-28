@@ -1,10 +1,10 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface EditResult {
   filePath: string;
@@ -26,7 +26,7 @@ export async function editVideo(
   try {
     // Check if ffmpeg is available
     try {
-      await execAsync("ffmpeg -version");
+      await execFileAsync("ffmpeg", ["-version"]);
     } catch {
       // FFmpeg not installed — just copy/trim without overlay
       console.warn("FFmpeg not found, copying source file as-is");
@@ -34,26 +34,28 @@ export async function editVideo(
       return { filePath: outputPath, duration: targetDuration };
     }
 
-    // Sanitize text for ffmpeg
+    // Sanitize text for ffmpeg drawtext filter (escape special chars)
     const safeProductName = productName
-      .replace(/'/g, "'\\''")
-      .replace(/[:\\]/g, " ")
+      .replace(/[\\':;$`"]/g, " ")
       .slice(0, 40);
     const priceText = `฿${price.toLocaleString()}`;
 
     // FFmpeg: cut to 30s + text overlay (product name + price)
-    const cmd = [
-      "ffmpeg -y",
-      `-i "${inputPath}"`,
-      `-t ${targetDuration}`,
-      `-vf "drawtext=text='${safeProductName}':fontsize=28:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-100,drawtext=text='${priceText}':fontsize=36:fontcolor=yellow:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-55"`,
-      `-c:v libx264 -preset fast -crf 23`,
-      `-c:a aac -b:a 128k`,
-      `-movflags +faststart`,
-      `"${outputPath}"`,
-    ].join(" ");
+    // Use execFile with args array to prevent shell injection
+    const vf = [
+      `drawtext=text='${safeProductName}':fontsize=28:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-100`,
+      `drawtext=text='${priceText}':fontsize=36:fontcolor=yellow:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-55`,
+    ].join(",");
 
-    await execAsync(cmd, { timeout: 120000 });
+    await execFileAsync("ffmpeg", [
+      "-y", "-i", inputPath,
+      "-t", String(targetDuration),
+      "-vf", vf,
+      "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+      "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart",
+      outputPath,
+    ], { timeout: 120000 });
 
     if (!fs.existsSync(outputPath)) return null;
 
