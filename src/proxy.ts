@@ -16,6 +16,11 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Debug endpoint (temporary)
+  if (pathname === "/api/debug-video") {
+    return NextResponse.next();
+  }
+
   // Pipeline API requires a secret token
   if (pathname.startsWith("/api/pipeline")) {
     const secret = req.headers.get("x-pipeline-secret") ??
