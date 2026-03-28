@@ -5,6 +5,7 @@ import { findVideoSource } from "./scraper/video-finder";
 import { downloadVideo } from "./video/downloader";
 import { editVideo } from "./video/editor";
 import { getStockVideo } from "./video/stock";
+import { getAndUploadStockVideo } from "./video/stock-upload";
 import { generateCaption } from "./ai/caption";
 import { generateHashtags } from "./ai/hashtag";
 import * as fs from "fs";
@@ -180,15 +181,25 @@ export async function runPipeline() {
 
       // Clean up
       try { fs.unlinkSync(editedFilePath); } catch {}
-    } else {
-      // No video produced — save failed production
+    }
+
+    // Serverless fallback: Pexels stock video → Supabase Storage directly
+    if (!videoUrl) {
+      const stockUrl = await getAndUploadStockVideo(topKeyword);
+      if (stockUrl) videoUrl = stockUrl;
+    }
+
+    // Save production record
+    {
       const { data: savedProd } = await supabase
         .from("video_productions")
         .insert({
           pipeline_run_id: runId,
           source_id: sourceId,
-          status: "failed",
-          error_log: "No video source available",
+          output_url: videoUrl || null,
+          duration: 30,
+          status: videoUrl ? "done" : "failed",
+          error_log: videoUrl ? null : "No video source available",
         })
         .select()
         .single();
