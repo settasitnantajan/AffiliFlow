@@ -1,6 +1,6 @@
 import { createServerSupabase } from "./supabase-server";
 import { analyzeProductImage } from "./ai/vision";
-import { searchAndDownloadYouTubeAPI } from "./video/youtube-api";
+import { downloadVideoViaRender } from "./video/render-service";
 import { generateCaption } from "./ai/caption";
 import { generateHashtags } from "./ai/hashtag";
 
@@ -119,7 +119,7 @@ export async function runPipeline() {
 
     let videoUrl: string | null = null;
     try {
-      videoUrl = await withTimeout(searchAndDownloadYouTubeAPI(productName), 120000);
+      videoUrl = await withTimeout(downloadVideoViaRender(productName), 120000);
     } catch (e) {
       console.warn("YouTube download failed:", e instanceof Error ? e.message : e);
     }
