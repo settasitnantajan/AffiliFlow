@@ -38,6 +38,7 @@ interface QueueItem {
   shopee_url: string;
   created_at: string;
   processed_at?: string;
+  lens_products?: { title: string; price: string; source: string }[];
 }
 
 function QueueDetailModal({
@@ -113,6 +114,21 @@ function QueueDetailModal({
               </div>
             )}
           </div>
+
+          {/* Google Lens results */}
+          {item.lens_products && item.lens_products.length > 0 && (
+            <div>
+              <p className="text-sm font-medium mb-1.5">🔍 สินค้าที่คล้าย (Google Lens)</p>
+              <div className="space-y-1.5">
+                {item.lens_products.map((lp, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 bg-muted/50 px-2 py-1.5 rounded-md text-xs">
+                    <span className="truncate flex-1">{lp.title}</span>
+                    <span className="shrink-0 text-green-500">{lp.price}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

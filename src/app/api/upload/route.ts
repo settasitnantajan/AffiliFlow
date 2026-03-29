@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { getErrorMessage } from "@/lib/utils";
 import { analyzeProductImage } from "@/lib/ai/vision";
+import { identifyProductWithLens } from "@/lib/ai/google-lens";
 
 export async function POST(request: Request) {
   try {
@@ -16,7 +17,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate URL to prevent XSS via javascript: or data: URIs
+    // Validate URL
     try {
       const parsed = new URL(shopeeUrl);
       if (!["http:", "https:"].includes(parsed.protocol)) {
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
     const supabase = createServerSupabase();
     let imageUrl: string | null = null;
 
-    // Upload image to Supabase Storage if provided
+    // Upload image to Supabase Storage
     if (image && image.size > 0) {
       const ext = image.name.split(".").pop() ?? "png";
       const fileName = `screenshot_${Date.now()}.${ext}`;
@@ -56,7 +57,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // Require image for AI analysis
     if (!imageUrl) {
       return NextResponse.json(
         { error: "ต้องมีภาพ screenshot เพื่อให้ AI วิเคราะห์ข้อมูลสินค้า" },
@@ -64,40 +64,48 @@ export async function POST(request: Request) {
       );
     }
 
-    // AI analyze before inserting into queue
-    let visionResult;
-    try {
-      visionResult = await analyzeProductImage(imageUrl);
-    } catch (e) {
+    // Run AI Vision + Google Lens in parallel
+    const [visionResult, lensResult] = await Promise.all([
+      analyzeProductImage(imageUrl).catch(() => null),
+      identifyProductWithLens(imageUrl).catch(() => null),
+    ]);
+
+    // Combine results: Lens name > Vision name, Vision commission (Lens doesn't have it)
+    const productName =
+      (lensResult?.product_name && lensResult.product_name.length > 3
+        ? lensResult.product_name
+        : null) ??
+      visionResult?.product_name ??
+      "สินค้า Shopee";
+
+    const price =
+      visionResult?.price && visionResult.price !== "ไม่ทราบ"
+        ? visionResult.price
+        : lensResult?.price || "-";
+
+    const commissionRate =
+      visionResult?.commission_rate && visionResult.commission_rate !== "ไม่ทราบ"
+        ? visionResult.commission_rate
+        : "-";
+
+    // Validate: at least product name must be readable
+    if (productName === "สินค้า Shopee" && !lensResult) {
       return NextResponse.json(
-        { error: `AI วิเคราะห์ข้อมูลไม่สำเร็จ: ${getErrorMessage(e)} — กรุณาอัพโหลดภาพใหม่` },
+        { error: "AI อ่านชื่อสินค้าไม่ได้ — กรุณาอัพโหลดภาพที่ชัดกว่านี้" },
         { status: 422 }
       );
     }
 
-    // Validate: all fields must have real values
-    const unknown = ["ไม่ทราบ", ""];
-    if (
-      unknown.includes(visionResult.product_name) ||
-      visionResult.product_name === "สินค้า Shopee" ||
-      unknown.includes(visionResult.price) ||
-      unknown.includes(visionResult.commission_rate)
-    ) {
-      return NextResponse.json(
-        { error: "AI วิเคราะห์ข้อมูลไม่สำเร็จ — ภาพไม่ชัดหรืออ่านไม่ได้ กรุณาอัพโหลดภาพใหม่" },
-        { status: 422 }
-      );
-    }
-
-    // Insert into product_queue with analyzed data
+    // Insert into product_queue
     const { data, error } = await supabase
       .from("product_queue")
       .insert({
         shopee_url: shopeeUrl,
         image_url: imageUrl,
-        product_name: visionResult.product_name,
-        price: visionResult.price,
-        commission_rate: visionResult.commission_rate,
+        product_name: productName,
+        price,
+        commission_rate: commissionRate,
+        lens_products: lensResult?.products ?? null,
         status: "queued",
       })
       .select()
@@ -110,7 +118,11 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, id: data.id });
+    return NextResponse.json({
+      success: true,
+      id: data.id,
+      source: lensResult ? "vision+lens" : "vision",
+    });
   } catch (e) {
     return NextResponse.json({ error: getErrorMessage(e) }, { status: 500 });
   }
