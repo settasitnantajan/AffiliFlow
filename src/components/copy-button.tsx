@@ -5,6 +5,32 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
+// iOS-safe clipboard copy
+function copyToClipboard(text: string): boolean {
+  // Try modern API first (works on most browsers)
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+
+  // Fallback: textarea trick (works on iOS Chrome/Safari)
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function CopyButton({
   text,
   label,
@@ -17,19 +43,22 @@ export function CopyButton({
   const router = useRouter();
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
+  const handleCopy = () => {
+    // Copy FIRST (synchronous) before any async work — required for iOS
+    copyToClipboard(text);
     setCopied(true);
     toast.success("คัดลอกแล้ว");
 
+    // Then mark as posted (async, non-blocking)
     if (videoId) {
-      await fetch("/api/videos/mark-posted", {
+      fetch("/api/videos/mark-posted", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: videoId }),
+      }).then(() => {
+        router.refresh();
+        window.dispatchEvent(new Event("badge-refresh"));
       });
-      router.refresh();
-      window.dispatchEvent(new Event("badge-refresh"));
     }
 
     setTimeout(() => setCopied(false), 2000);

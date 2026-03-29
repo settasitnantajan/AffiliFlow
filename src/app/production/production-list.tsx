@@ -85,26 +85,34 @@ export function ProductionList({ items }: { items: ProductionItem[] }) {
                 </span>
               </div>
 
-              {/* Caption */}
-              <p className="text-xs line-clamp-3 mb-1">{item.caption_text}</p>
-              {item.hashtags?.length > 0 && (
-                <p className="text-[11px] text-blue-400 line-clamp-1 mb-2">
-                  {item.hashtags.join(" ")}
-                </p>
-              )}
+              {/* Caption + hashtag */}
+              <div className="border-l-2 border-primary/30 pl-2 mb-2">
+                <p className="text-xs line-clamp-3">{item.caption_text}</p>
+                {item.hashtags?.length > 0 && (
+                  <p className="text-[11px] text-blue-400 line-clamp-2 mt-0.5">
+                    {item.hashtags.join(" ")}
+                  </p>
+                )}
+                <CopyButton text={captionWithTags} label="คัดลอกแคปชั่น" />
+              </div>
 
               {/* Links */}
-              {(item.product_links ?? []).map((p, i) => (
-                <a
-                  key={i}
-                  href={p.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] text-blue-400 hover:underline truncate block"
-                >
-                  {p.url}
-                </a>
-              ))}
+              {(item.product_links ?? []).length > 0 && (
+                <div className="border-l-2 border-green-500/30 pl-2 mb-2">
+                  {(item.product_links ?? []).map((p, i) => (
+                    <a
+                      key={i}
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-blue-400 hover:underline truncate block"
+                    >
+                      {p.url}
+                    </a>
+                  ))}
+                  <CopyButton text={linksText} label="คัดลอกลิงก์" />
+                </div>
+              )}
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 mt-2">
