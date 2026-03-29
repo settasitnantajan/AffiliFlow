@@ -80,18 +80,25 @@ interface VideoMeta {
 }
 
 // Stage 1: Search — yt-dlp flat-playlist search, returns metadata without downloading
-async function ytSearch(query: string, limit = 20): Promise<VideoMeta[]> {
+async function ytSearch(query: string, limit = 10): Promise<VideoMeta[]> {
   console.log(`[Stage 1] yt-dlp search: "${query}" (limit ${limit})`);
   const out = await run("yt-dlp", [
     "--flat-playlist", "--dump-json", "--no-download",
+    "--socket-timeout", "10",
     `ytsearch${limit}:${query}`,
-  ], 30000);
+  ], 60000); // 60s timeout
 
   const results: VideoMeta[] = [];
   for (const line of out.trim().split("\n")) {
     if (!line) continue;
     try {
       const j = JSON.parse(line);
+      // thumbnails: pick the largest one (last in array)
+      const thumbs = j.thumbnails ?? [];
+      const bestThumb = thumbs.length > 0
+        ? thumbs[thumbs.length - 1].url
+        : `https://i.ytimg.com/vi/${j.id}/hqdefault.jpg`; // fallback YouTube thumb URL
+
       results.push({
         id: j.id ?? "",
         title: j.title ?? "",
@@ -101,7 +108,7 @@ async function ytSearch(query: string, limit = 20): Promise<VideoMeta[]> {
         upload_date: j.upload_date ?? "",
         channel: j.channel ?? j.uploader ?? "",
         channel_follower_count: j.channel_follower_count ?? 0,
-        thumbnail: j.thumbnail ?? j.thumbnails?.[0]?.url ?? "",
+        thumbnail: j.thumbnail ?? bestThumb,
         url: j.url ?? j.webpage_url ?? `https://www.youtube.com/watch?v=${j.id}`,
         description: (j.description ?? "").slice(0, 500),
       });
@@ -109,6 +116,37 @@ async function ytSearch(query: string, limit = 20): Promise<VideoMeta[]> {
   }
   console.log(`[Stage 1] Got ${results.length} results`);
   return results;
+}
+
+// Fallback search: HTML scraping (if yt-dlp search fails)
+async function htmlSearch(query: string, limit = 10): Promise<VideoMeta[]> {
+  console.log(`[Stage 1 fallback] HTML search: "${query}"`);
+  const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+  const res = await fetch(searchUrl, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+    signal: AbortSignal.timeout(10000),
+  });
+  const html = await res.text();
+
+  const ids = [...new Set([
+    ...[...html.matchAll(/\/shorts\/([a-zA-Z0-9_-]{11})/g)].map((m) => m[1]),
+    ...[...html.matchAll(/\/watch\?v=([a-zA-Z0-9_-]{11})/g)].map((m) => m[1]),
+  ])].slice(0, limit);
+
+  console.log(`[Stage 1 fallback] Found ${ids.length} IDs`);
+  return ids.map((id) => ({
+    id,
+    title: "",
+    duration: 60, // assume reasonable duration
+    view_count: 100,
+    like_count: 0,
+    upload_date: "",
+    channel: "",
+    channel_follower_count: 0,
+    thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    url: `https://www.youtube.com/watch?v=${id}`,
+    description: "",
+  }));
 }
 
 // Stage 2: Basic filter — duration, views, freshness
@@ -155,10 +193,18 @@ function similarity(a: string, b: string): number {
 // Stage 4: AI Ranking — Groq LLM scores relevance from metadata
 async function aiRank(videos: VideoMeta[], productName: string, topN = 8): Promise<VideoMeta[]> {
   if (videos.length === 0) return [];
+
+  // If no titles available (HTML fallback), skip AI ranking and return as-is
+  const hasMetadata = videos.some((v) => v.title.length > 0);
+  if (!hasMetadata) {
+    console.log(`[Stage 4] No metadata for AI ranking, returning top ${topN} by order`);
+    return videos.slice(0, topN);
+  }
+
   console.log(`[Stage 4] AI ranking ${videos.length} videos for "${productName}"`);
 
   const listing = videos.map((v, i) =>
-    `${i + 1}. "${v.title}" | ${v.channel} | ${v.duration}s | ${v.view_count} views | ${v.upload_date}`
+    `${i + 1}. "${v.title || "(no title)"}" | ${v.channel || "?"} | ${v.duration}s | ${v.view_count} views | ${v.upload_date || "?"}`
   ).join("\n");
 
   try {
@@ -208,6 +254,11 @@ async function thumbnailCheck(videos: VideoMeta[], productName: string): Promise
   console.log(`[Stage 5] Thumbnail check for ${videos.length} videos`);
 
   const results = await rateLimited(videos, async (v) => {
+    // Skip thumbnail check if no thumbnail URL
+    if (!v.thumbnail) {
+      console.log(`  Thumbnail ${v.id}: no URL, keeping`);
+      return v;
+    }
     try {
       const res = await withRetry(() => groq.chat.completions.create({
         model: "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -435,7 +486,19 @@ export async function searchAndDownloadMultipleYouTube(
         }
       }
     } catch (e) {
-      console.warn(`[Stage 1] Search failed for "${q}":`, e instanceof Error ? e.message : e);
+      console.warn(`[Stage 1] yt-dlp failed for "${q}":`, e instanceof Error ? e.message : e);
+      // Fallback to HTML scraping
+      try {
+        const fallbackResults = await htmlSearch(q, 10);
+        for (const r of fallbackResults) {
+          if (!seenIds.has(r.id)) {
+            seenIds.add(r.id);
+            allResults.push(r);
+          }
+        }
+      } catch (e2) {
+        console.warn(`[Stage 1] HTML fallback also failed for "${q}":`, e2 instanceof Error ? e2.message : e2);
+      }
     }
   }
 
