@@ -552,11 +552,20 @@ export async function searchAndDownloadMultipleYouTube(
   // Stage 3: Dedup
   const unique = dedup(filtered);
 
-  // Stage 4: AI Ranking
-  const ranked = await aiRank(unique, cleanName, 8);
+  // Stage 4: AI Ranking — keep more candidates to survive later filtering
+  const ranked = await aiRank(unique, cleanName, Math.max(count * 2, 10));
 
   // Stage 5: Thumbnail check
-  const checked = await thumbnailCheck(ranked, cleanName);
+  let checked = await thumbnailCheck(ranked, cleanName);
+
+  // If thumbnail check is too aggressive, fall back to ranked list
+  if (checked.length < count) {
+    console.log(`[Stage 5] Only ${checked.length} passed thumbnail, adding back ranked to reach ${count}`);
+    const checkedIds = new Set(checked.map((v) => v.id));
+    for (const v of ranked) {
+      if (!checkedIds.has(v.id)) checked.push(v);
+    }
+  }
 
   // Stage 6: Download + portrait + face detection
   // Priority: no-face first, then face videos to fill up to count
