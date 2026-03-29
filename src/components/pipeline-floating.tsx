@@ -101,7 +101,7 @@ export function PipelineFloating() {
           className="h-full rounded-full transition-all duration-700 ease-out"
           style={{
             width: `${progress}%`,
-            background: barColor,
+            backgroundImage: barColor,
             backgroundSize: "200% 100%",
             animation: "shimmer 1.5s linear infinite",
             boxShadow: glowColor,

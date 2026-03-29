@@ -186,7 +186,7 @@ export function PipelineRunner() {
                 className="h-full rounded-full transition-all duration-700 ease-out"
                 style={{
                   width: `${progress}%`,
-                  background:
+                  backgroundImage:
                     progress >= 90
                       ? "linear-gradient(90deg, #16a34a, #4ade80, #16a34a)"
                       : progress >= 40
