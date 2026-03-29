@@ -40,7 +40,7 @@ export default async function VideosPage() {
             const megaCopyText = [fullCaption, linksText].filter(Boolean).join("\n\n---\n\n");
 
             return (
-              <Card key={v.id}>
+              <Card key={v.id} className={v.status !== "posted" ? "border-destructive border-2" : ""}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm">
@@ -55,7 +55,7 @@ export default async function VideosPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Mega copy button */}
-                  <CopyAllButton text={megaCopyText} />
+                  <CopyAllButton text={megaCopyText} videoId={v.id} />
 
                   {/* Video + Download */}
                   <div>
@@ -64,7 +64,7 @@ export default async function VideosPage() {
                         <video
                           src={v.video_url}
                           controls
-                          className="w-full max-w-md rounded-lg"
+                          className="w-full max-w-50 sm:max-w-60 mx-auto rounded-lg"
                         />
                         <DownloadButton url={v.video_url} />
                       </div>
@@ -75,9 +75,9 @@ export default async function VideosPage() {
 
                   {/* Caption + Hashtags */}
                   <div className="border-l-2 border-primary/30 pl-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-sm font-medium">แคปชั่น + แฮชแท็ก:</p>
-                      <CopyButton text={fullCaption} />
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <p className="text-sm font-medium whitespace-nowrap">แคปชั่น + แฮชแท็ก:</p>
+                      <CopyButton text={fullCaption} videoId={v.id} />
                     </div>
                     <div className="bg-muted p-3 rounded-lg">
                       <p className="text-sm whitespace-pre-wrap">
@@ -94,34 +94,26 @@ export default async function VideosPage() {
                   {/* Separator */}
                   <div className="border-t border-border" />
 
-                  {/* Product Link + Shopee URL */}
+                  {/* Product Links */}
                   <div className="border-l-2 border-green-500/30 pl-3">
                     <p className="text-sm font-medium mb-2">
-                      สินค้า ({links.length}):
+                      ลิงก์สินค้า ({links.length}):
                     </p>
                     <div className="space-y-2">
                       {links.map((p, i) => (
                         <div
                           key={i}
-                          className="bg-muted/50 p-2 rounded-lg text-sm space-y-1"
+                          className="bg-muted/50 p-2 rounded-lg flex items-center gap-2 min-w-0 overflow-hidden"
                         >
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                            <span className="font-medium break-words">{p.name}</span>
-                            <div className="flex items-center gap-3 shrink-0 text-xs sm:text-sm">
-                              {p.price && <span>{p.price}</span>}
-                              {p.commission_rate && (
-                                <span className="text-green-500 font-medium">
-                                  {p.commission_rate}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-xs text-blue-400 break-all flex-1 select-all">
-                              {p.url}
-                            </p>
-                            <CopyButton text={p.url} />
-                          </div>
+                          <a
+                            href={p.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-400 truncate min-w-0 flex-1 hover:underline"
+                          >
+                            {p.url}
+                          </a>
+                          <CopyButton text={p.url} videoId={v.id} />
                         </div>
                       ))}
                       {links.length === 0 && (

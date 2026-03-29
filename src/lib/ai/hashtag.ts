@@ -13,8 +13,9 @@ export async function generateHashtags(
 keyword: ${keyword}
 สินค้า: ${productName}
 
-ต้องมี: #ShopeeVideo #ShopeeAffiliate #รีวิวสินค้า
-เพิ่ม hashtag ที่เกี่ยวข้องกับสินค้าและ trending`;
+ต้องมี: #ShopeeVideo #รีวิวสินค้า
+เพิ่ม hashtag ประเภทสินค้า เช่น ถ้าเป็น powerbank ให้มี #powerbank
+ห้ามใส่ hashtag เกี่ยวกับ affiliate`;
 
   const result = await chatCompletion(systemPrompt, userPrompt);
 
@@ -28,7 +29,6 @@ keyword: ${keyword}
   // Ensure minimum hashtags
   const defaults = [
     "#ShopeeVideo",
-    "#ShopeeAffiliate",
     "#รีวิวสินค้า",
     "#สินค้าดี",
     "#ของดีShopee",

@@ -1,8 +1,7 @@
 import { createServerSupabase } from "./supabase-server";
 import { analyzeProductImage } from "./ai/vision";
 import { searchAndDownloadYouTube } from "./video/youtube-download";
-import { generateCaption } from "./ai/caption";
-import { generateHashtags } from "./ai/hashtag";
+import { generateCaptionAndHashtags } from "./ai/caption";
 
 import { parsePrice, getErrorMessage } from "./utils";
 
@@ -17,7 +16,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
-export async function runPipeline() {
+export async function runPipeline(queueItemId?: string) {
   const supabase = createServerSupabase();
 
   // Create pipeline run with progress
@@ -42,16 +41,16 @@ export async function runPipeline() {
         .eq("id", runId);
     };
 
-    // ========== Step 1: Pick from queue (FIFO) — 10% ==========
+    // ========== Step 1: Pick from queue (FIFO or specific item) — 10% ==========
     await updateProgress("queue", 10);
 
-    const { data: queueData, error: queueError } = await supabase
-      .from("product_queue")
-      .select("*")
-      .eq("status", "queued")
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .single();
+    let queueQuery = supabase.from("product_queue").select("*");
+    if (queueItemId) {
+      queueQuery = queueQuery.eq("id", queueItemId);
+    } else {
+      queueQuery = queueQuery.eq("status", "queued").order("created_at", { ascending: true });
+    }
+    const { data: queueData, error: queueError } = await queueQuery.limit(1).single();
 
     if (queueError || !queueData) {
       throw new Error("ไม่มีสินค้าในคิว — ไปหน้า Upload เพื่อเพิ่มสินค้า");
@@ -114,7 +113,7 @@ export async function runPipeline() {
       .update({ products_found: 1 })
       .eq("id", runId);
 
-    // ========== Step 3: YouTube video (with timeout + Pexels fallback) — 40% ==========
+    // ========== Step 3: YouTube video (with timeout) — 40% ==========
     await updateProgress("video", 40);
 
     let videoUrl: string | null = null;
@@ -156,15 +155,12 @@ export async function runPipeline() {
     // ========== Step 4: AI Caption + Hashtag — 70% ==========
     await updateProgress("caption", 70);
 
-    const [captionText, hashtags] = await Promise.all([
-      generateCaption([
-        {
-          name: productName,
-          price: numericPrice,
-          shopeeUrl: item.shopee_url,
-        },
-      ]),
-      generateHashtags(productName, productName),
+    const { caption: captionText, hashtags } = await generateCaptionAndHashtags([
+      {
+        name: productName,
+        price: numericPrice,
+        shopeeUrl: item.shopee_url,
+      },
     ]);
 
     await supabase.from("captions").insert({
