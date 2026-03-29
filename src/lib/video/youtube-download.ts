@@ -459,6 +459,45 @@ async function uploadProcessedVideo(processedPath: string): Promise<string | nul
 // Main pipeline: 6-stage video search & download
 // ============================================================
 
+// Generate short, effective YouTube search queries from product name using AI
+async function generateSearchQueries(productName: string): Promise<string[]> {
+  const fallback = [
+    `${productName} รีวิว`,
+    `${productName} review`,
+  ];
+  try {
+    const res = await withRetry(() => groq.chat.completions.create({
+      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      messages: [{
+        role: "user",
+        content: `ชื่อสินค้า: "${productName}"
+
+สร้าง YouTube search query สั้นๆ 3 อัน เพื่อหาวีดีโอรีวิว/แกะกล่องของสินค้านี้
+- แต่ละ query ไม่เกิน 5-6 คำ
+- ดึงเฉพาะชื่อแบรนด์ + ชื่อรุ่น + ประเภทสินค้า (ตัดคำขยายออก)
+- ผสมทั้งภาษาไทยและอังกฤษ
+
+ตอบเป็น JSON array เช่น ["EVA claw รองเท้า รีวิว", "EVA claw sandals review", "รองเท้า EVA แกะกล่อง"]
+ตอบแค่ JSON ไม่ต้องอธิบาย`,
+      }],
+      temperature: 0.3,
+      max_tokens: 200,
+    }));
+    const text = res.choices[0]?.message?.content?.trim() ?? "[]";
+    const match = text.match(/\[[\s\S]*\]/);
+    if (match) {
+      const queries: string[] = JSON.parse(match[0]);
+      if (queries.length > 0) {
+        console.log(`[Stage 0] AI search queries: ${queries.join(" | ")}`);
+        return queries.slice(0, 3);
+      }
+    }
+  } catch (e) {
+    console.warn("[Stage 0] AI query generation failed:", e instanceof Error ? e.message : e);
+  }
+  return fallback;
+}
+
 export async function searchAndDownloadMultipleYouTube(
   productName: string,
   count = 5
@@ -466,12 +505,8 @@ export async function searchAndDownloadMultipleYouTube(
   const cleanName = cleanProductName(productName);
   console.log(`\n=== Video Pipeline: "${cleanName}" (need ${count}) ===`);
 
-  // Stage 1: Search with multiple queries, merge results
-  const queries = [
-    `${cleanName} รีวิว แกะกล่อง`,
-    `${cleanName} review unboxing`,
-    `${cleanName} รีวิว shopee`,
-  ];
+  // Stage 0: AI generates short, effective search queries
+  const queries = await generateSearchQueries(cleanName);
 
   const allResults: VideoMeta[] = [];
   const seenIds = new Set<string>();
