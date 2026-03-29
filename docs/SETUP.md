@@ -52,26 +52,13 @@ npm install
 
 ## 3. Environment Variables
 
-สร้างไฟล์ `.env.local` ที่ root:
+คัดลอกจาก `.env.example` แล้วใส่ค่าจริง:
 
-```env
-# Supabase
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-
-# Groq AI (LLM + Vision)
-GROQ_API_KEY=your-groq-api-key
-
-# Pexels (stock video fallback)
-PEXELS_API_KEY=your-pexels-api-key
-
-# Login password
-AUTH_PASSWORD=your-password
-
-# Optional
-SERPER_API_KEY=your-serper-key        # Google image search
-PIPELINE_SECRET=your-secret           # API security header
+```bash
+cp .env.example .env.local
 ```
+
+แก้ไขค่าใน `.env.local` ตาม API keys ที่มี
 
 ### วิธีขอ API Keys
 
