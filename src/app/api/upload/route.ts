@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
-import { getErrorMessage } from "@/lib/utils";
+import { getErrorMessage, cleanProductName } from "@/lib/utils";
 import { analyzeProductImage } from "@/lib/ai/vision";
 import { identifyProductWithLens } from "@/lib/ai/google-lens";
 
@@ -71,12 +71,13 @@ export async function POST(request: Request) {
     ]);
 
     // Combine results: Lens name > Vision name, Vision commission (Lens doesn't have it)
-    const productName =
+    const rawName =
       (lensResult?.product_name && lensResult.product_name.length > 3
         ? lensResult.product_name
         : null) ??
       visionResult?.product_name ??
       "สินค้า Shopee";
+    const productName = rawName === "สินค้า Shopee" ? rawName : cleanProductName(rawName);
 
     const price =
       visionResult?.price && visionResult.price !== "ไม่ทราบ"
@@ -105,7 +106,10 @@ export async function POST(request: Request) {
         product_name: productName,
         price,
         commission_rate: commissionRate,
-        lens_products: lensResult?.products ?? null,
+        lens_products: lensResult?.products?.map((p: { title: string; price: string; source: string }) => ({
+          ...p,
+          title: cleanProductName(p.title),
+        })) ?? null,
         status: "queued",
       })
       .select()

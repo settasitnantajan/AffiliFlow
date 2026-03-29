@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createServerSupabase } from "../supabase-server";
 import { groq } from "../ai/groq";
+import { cleanProductName } from "../utils";
 
 // Pick n random items from array (Fisher-Yates shuffle, take first n)
 function pickRandom<T>(arr: T[], n: number): T[] {
@@ -257,12 +258,7 @@ export async function searchAndDownloadMultipleYouTube(
   const urls: string[] = [];
   const usedVideoIds = new Set<string>();
 
-  // Clean product name for search: remove store names, pipes, extra text
-  const cleanName = productName
-    .replace(/\s*\|\s*(Shopee|Lazada|Shopee Thailand|Lazada\.co\.th).*/gi, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80); // limit length for better search
+  const cleanName = cleanProductName(productName);
 
   const searchStrategies: { query: string; type: "shorts" | "watch" }[] = [
     { query: `${cleanName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
@@ -333,12 +329,7 @@ export async function searchAndDownloadYouTube(
     // Search strategies in priority order:
     // 1. Shorts search queries (vertical video, product-first content)
     // 2. Fallback to regular watch videos
-    // Clean product name for search
-    const cleanName = productName
-      .replace(/\s*\|\s*(Shopee|Lazada|Shopee Thailand|Lazada\.co\.th).*/gi, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 80);
+    const cleanName = cleanProductName(productName);
 
     const searchStrategies: { query: string; type: "shorts" | "watch" }[] = [
       { query: `${cleanName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },

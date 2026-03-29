@@ -14,7 +14,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { DeleteQueueButton } from "@/components/delete-queue-button";
-import { Play, Loader2, Eye } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Play, Loader2, Eye, Pencil, Save, X } from "lucide-react";
 import { formatThai } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -45,81 +46,167 @@ function QueueDetailModal({
   item,
   open,
   onOpenChange,
+  onSaved,
 }: {
   item: QueueItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSaved?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+  const [editCommission, setEditCommission] = useState("");
+
+  const startEdit = () => {
+    if (!item) return;
+    setEditName(item.product_name ?? "");
+    setEditPrice(item.price ?? "");
+    setEditCommission(item.commission_rate ?? "");
+    setEditing(true);
+  };
+
+  const cancelEdit = () => setEditing(false);
+
+  const saveEdit = async () => {
+    if (!item) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/queue/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_name: editName,
+          price: editPrice,
+          commission_rate: editCommission,
+        }),
+      });
+      if (res.ok) {
+        toast.success("บันทึกแล้ว");
+        setEditing(false);
+        onSaved?.();
+      } else {
+        toast.error("บันทึกไม่สำเร็จ");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!item) return null;
+  const canEdit = item.status === "queued";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) setEditing(false); onOpenChange(v); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{item.product_name ?? "รอ AI วิเคราะห์..."}</DialogTitle>
-          <DialogDescription>
-            เพิ่มเมื่อ {formatThai(item.created_at)}
-          </DialogDescription>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="text-base leading-snug">
+                {item.product_name ?? "รอ AI วิเคราะห์..."}
+              </DialogTitle>
+              <DialogDescription>
+                เพิ่มเมื่อ {formatThai(item.created_at)}
+              </DialogDescription>
+            </div>
+            {canEdit && !editing && (
+              <Button variant="outline" size="sm" onClick={startEdit} className="shrink-0 gap-1.5">
+                <Pencil className="h-3 w-3" />
+                แก้ไข
+              </Button>
+            )}
+          </div>
         </DialogHeader>
 
-        <div className="space-y-3">
-          {/* Image */}
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+          {/* Image — constrained height */}
           {item.image_url && (
             <img
               src={item.image_url}
               alt=""
-              className="max-h-60 w-auto mx-auto rounded-lg border"
+              className="max-h-48 w-auto mx-auto rounded-lg border object-contain"
             />
           )}
 
-          {/* Details */}
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">สถานะ:</span>
-              <Badge variant={statusColors[item.status] ?? "outline"}>
-                {item.status}
-              </Badge>
+          {/* Edit form */}
+          {editing ? (
+            <div className="space-y-3 rounded-lg border p-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">ชื่อสินค้า</label>
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">ราคา</label>
+                  <Input value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">ค่าคอม</label>
+                  <Input value={editCommission} onChange={(e) => setEditCommission(e.target.value)} />
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={saving}>
+                  <X className="h-3 w-3 mr-1" />
+                  ยกเลิก
+                </Button>
+                <Button size="sm" onClick={saveEdit} disabled={saving} className="gap-1.5">
+                  {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                  บันทึก
+                </Button>
+              </div>
             </div>
-
-            {item.price && (
+          ) : (
+            /* Details (read-only) */
+            <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">ราคา:</span>
-                <span>{item.price}</span>
+                <span className="text-muted-foreground">สถานะ:</span>
+                <Badge variant={statusColors[item.status] ?? "outline"}>
+                  {item.status}
+                </Badge>
               </div>
-            )}
 
-            {item.commission_rate && (
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">ค่าคอม:</span>
-                <span className="text-green-500">{item.commission_rate}</span>
+              {item.price && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">ราคา:</span>
+                  <span>{item.price}</span>
+                </div>
+              )}
+
+              {item.commission_rate && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">ค่าคอม:</span>
+                  <span className="text-green-500">{item.commission_rate}</span>
+                </div>
+              )}
+
+              <div>
+                <span className="text-muted-foreground">ลิงก์:</span>
+                <a
+                  href={item.shopee_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:underline break-all block mt-0.5"
+                >
+                  {item.shopee_url}
+                </a>
               </div>
-            )}
 
-            <div>
-              <span className="text-muted-foreground">ลิงก์:</span>
-              <a
-                href={item.shopee_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:underline break-all block mt-0.5"
-              >
-                {item.shopee_url}
-              </a>
+              {item.processed_at && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">ประมวลผลเมื่อ:</span>
+                  <span>{formatThai(item.processed_at)}</span>
+                </div>
+              )}
             </div>
-
-            {item.processed_at && (
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">ประมวลผลเมื่อ:</span>
-                <span>{formatThai(item.processed_at)}</span>
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Google Lens results */}
           {item.lens_products && item.lens_products.length > 0 && (
             <div>
-              <p className="text-sm font-medium mb-1.5">🔍 สินค้าที่คล้าย (Google Lens)</p>
-              <div className="space-y-1.5">
+              <p className="text-sm font-medium mb-1.5">สินค้าที่คล้าย (Google Lens)</p>
+              <div className="space-y-1.5 max-h-32 overflow-y-auto">
                 {item.lens_products.map((lp, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 bg-muted/50 px-2 py-1.5 rounded-md text-xs">
                     <span className="truncate flex-1">{lp.title}</span>
@@ -302,6 +389,16 @@ export function QueueList({ items }: { items: QueueItem[] }) {
                   >
                     <Eye className="h-3 w-3" />
                   </Button>
+                  {isPending && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => setModalItem(item)}
+                      title="แก้ไข"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  )}
                   {(isPending || item.status === "done" || item.status === "failed") && (
                     <Button
                       variant="outline"
@@ -334,6 +431,7 @@ export function QueueList({ items }: { items: QueueItem[] }) {
         item={modalItem}
         open={!!modalItem}
         onOpenChange={(open) => !open && setModalItem(null)}
+        onSaved={() => { setModalItem(null); router.refresh(); }}
       />
 
       {/* Pending queue header */}
