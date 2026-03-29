@@ -558,12 +558,18 @@ export async function searchAndDownloadMultipleYouTube(
   // Stage 5: Thumbnail check
   const checked = await thumbnailCheck(ranked, cleanName);
 
-  // Stage 6: Download + portrait + face detection → skip if face detected
-  console.log(`[Stage 6] Downloading top candidates (need ${count} without faces)`);
-  const urls: string[] = [];
+  // Stage 6: Download + portrait + face detection
+  // Priority: no-face first, then face videos to fill up to count
+  console.log(`[Stage 6] Downloading candidates (need ${count})`);
+  const noFaceUrls: string[] = [];
+  const faceUrls: string[] = [];
 
   for (const video of checked) {
-    if (urls.length >= count) break;
+    // Stop early if we already have enough no-face videos
+    if (noFaceUrls.length >= count) break;
+    // Stop if we have enough total (no-face + face backup)
+    if (noFaceUrls.length + faceUrls.length >= count + 3) break;
+
     const tempFiles: string[] = [];
     const isShorts = video.duration <= 60;
 
@@ -578,15 +584,15 @@ export async function searchAndDownloadMultipleYouTube(
       const faceResult = await hasFace(processedPath);
       tempFiles.push(...faceResult.thumbPaths);
 
-      if (faceResult.detected) {
-        console.log(`  ${video.id}: face detected → skip`);
-        continue;
-      }
-
       const url = await uploadProcessedVideo(processedPath);
-      if (url) {
-        urls.push(url);
-        console.log(`  Got ${urls.length}/${count} videos`);
+      if (!url) continue;
+
+      if (faceResult.detected) {
+        console.log(`  ${video.id}: face → backup (${faceUrls.length + 1})`);
+        faceUrls.push(url);
+      } else {
+        console.log(`  ${video.id}: no face → got ${noFaceUrls.length + 1}/${count}`);
+        noFaceUrls.push(url);
       }
     } catch (e) {
       console.warn(`  ${video.id} failed:`, e instanceof Error ? e.message : e);
@@ -595,34 +601,8 @@ export async function searchAndDownloadMultipleYouTube(
     }
   }
 
-  // Fallback: if not enough no-face videos, re-download with faces allowed
-  if (urls.length < count && checked.length > 0) {
-    console.log(`[Stage 6] Fallback: need ${count - urls.length} more, allowing faces`);
-    for (const video of checked) {
-      if (urls.length >= count) break;
-      const tempFiles: string[] = [];
-      const isShorts = video.duration <= 60;
-
-      try {
-        const rawPath = await downloadVideo(video.id, isShorts);
-        if (!rawPath) continue;
-        tempFiles.push(rawPath);
-
-        const processedPath = await processToPortrait(rawPath);
-        tempFiles.push(processedPath);
-
-        const url = await uploadProcessedVideo(processedPath);
-        if (url && !urls.includes(url)) {
-          urls.push(url);
-          console.log(`  Fallback got ${urls.length}/${count}`);
-        }
-      } catch {
-        // skip
-      } finally {
-        for (const f of tempFiles) await unlink(f).catch(() => {});
-      }
-    }
-  }
+  // Combine: no-face first, then fill with face videos up to count
+  const urls = [...noFaceUrls, ...faceUrls].slice(0, count);
 
   console.log(`=== Video Pipeline done: ${urls.length} videos ===\n`);
   return urls;
