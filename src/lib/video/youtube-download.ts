@@ -156,7 +156,7 @@ function basicFilter(videos: VideoMeta[]): VideoMeta[] {
   const cutoff = oneYearAgo.toISOString().replace(/[-T:Z]/g, "").slice(0, 8);
 
   const filtered = videos.filter((v) => {
-    if (v.duration < 15 || v.duration > 900) return false;  // 15s–15min
+    if (v.duration < 15 || v.duration > 1200) return false;  // 15s–20min
     if (v.view_count < 50) return false;
     if (v.upload_date && v.upload_date < cutoff) return false;
     return true;
