@@ -10,44 +10,6 @@ import { cleanProductName } from "../utils";
 // Helpers
 // ============================================================
 
-// Rate-limited concurrency: run async tasks in batches with delay between batches
-async function rateLimited<T>(
-  items: T[],
-  fn: (item: T) => Promise<unknown>,
-  { batchSize = 2, delayMs = 1500 } = {}
-): Promise<Awaited<ReturnType<typeof fn>>[]> {
-  const results: Awaited<ReturnType<typeof fn>>[] = [];
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize);
-    const batchResults = await Promise.all(batch.map(fn));
-    results.push(...(batchResults as Awaited<ReturnType<typeof fn>>[]));
-    // Delay between batches (skip after last batch)
-    if (i + batchSize < items.length) {
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-  }
-  return results;
-}
-
-// Retry with exponential backoff for Groq 429 errors
-async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (e: unknown) {
-      const status = (e as { status?: number })?.status;
-      if (status === 429 && attempt < maxRetries) {
-        const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
-        console.warn(`[Rate limit] 429 hit, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error("withRetry: should not reach here");
-}
-
 function run(cmd: string, args: string[], timeout = 90000): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = execFile(cmd, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
@@ -61,66 +23,31 @@ function run(cmd: string, args: string[], timeout = 90000): Promise<string> {
   });
 }
 
-// ============================================================
-// Video metadata from yt-dlp search
-// ============================================================
-
-interface VideoMeta {
-  id: string;
-  title: string;
-  duration: number;       // seconds
-  view_count: number;
-  like_count: number;
-  upload_date: string;    // YYYYMMDD
-  channel: string;
-  channel_follower_count: number;
-  thumbnail: string;      // URL
-  url: string;
-  description: string;
-}
-
-// Stage 1: Search — yt-dlp flat-playlist search, returns metadata without downloading
-async function ytSearch(query: string, limit = 10): Promise<VideoMeta[]> {
-  console.log(`[Stage 1] yt-dlp search: "${query}" (limit ${limit})`);
-  const out = await run("yt-dlp", [
-    "--flat-playlist", "--dump-json", "--no-download",
-    "--socket-timeout", "10",
-    `ytsearch${limit}:${query}`,
-  ], 60000); // 60s timeout
-
-  const results: VideoMeta[] = [];
-  for (const line of out.trim().split("\n")) {
-    if (!line) continue;
+// Retry with exponential backoff for Groq 429 errors
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const j = JSON.parse(line);
-      // thumbnails: pick the largest one (last in array)
-      const thumbs = j.thumbnails ?? [];
-      const bestThumb = thumbs.length > 0
-        ? thumbs[thumbs.length - 1].url
-        : `https://i.ytimg.com/vi/${j.id}/hqdefault.jpg`; // fallback YouTube thumb URL
-
-      results.push({
-        id: j.id ?? "",
-        title: j.title ?? "",
-        duration: j.duration ?? 0,
-        view_count: j.view_count ?? 0,
-        like_count: j.like_count ?? 0,
-        upload_date: j.upload_date ?? "",
-        channel: j.channel ?? j.uploader ?? "",
-        channel_follower_count: j.channel_follower_count ?? 0,
-        thumbnail: j.thumbnail ?? bestThumb,
-        url: j.url ?? j.webpage_url ?? `https://www.youtube.com/watch?v=${j.id}`,
-        description: (j.description ?? "").slice(0, 500),
-      });
-    } catch { /* skip malformed lines */ }
+      return await fn();
+    } catch (e: unknown) {
+      const status = (e as { status?: number })?.status;
+      if (status === 429 && attempt < maxRetries) {
+        const delay = Math.pow(2, attempt) * 2000;
+        console.warn(`[Rate limit] 429, retry in ${delay}ms (${attempt + 1}/${maxRetries})`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
   }
-  console.log(`[Stage 1] Got ${results.length} results`);
-  return results;
+  throw new Error("withRetry: unreachable");
 }
 
-// Fallback search: HTML scraping (if yt-dlp search fails)
-async function htmlSearch(query: string, limit = 10): Promise<VideoMeta[]> {
-  console.log(`[Stage 1 fallback] HTML search: "${query}"`);
+// ============================================================
+// YouTube search — HTML scraping (reliable method)
+// ============================================================
+
+async function searchYouTube(query: string): Promise<string[]> {
+  console.log(`  Search: "${query}"`);
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
   const res = await fetch(searchUrl, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
@@ -128,173 +55,58 @@ async function htmlSearch(query: string, limit = 10): Promise<VideoMeta[]> {
   });
   const html = await res.text();
 
+  // Extract both shorts and watch IDs, keep YouTube relevance order
   const ids = [...new Set([
     ...[...html.matchAll(/\/shorts\/([a-zA-Z0-9_-]{11})/g)].map((m) => m[1]),
     ...[...html.matchAll(/\/watch\?v=([a-zA-Z0-9_-]{11})/g)].map((m) => m[1]),
-  ])].slice(0, limit);
+  ])];
 
-  console.log(`[Stage 1 fallback] Found ${ids.length} IDs`);
-  return ids.map((id) => ({
-    id,
-    title: "",
-    duration: 60, // assume reasonable duration
-    view_count: 100,
-    like_count: 0,
-    upload_date: "",
-    channel: "",
-    channel_follower_count: 0,
-    thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-    url: `https://www.youtube.com/watch?v=${id}`,
-    description: "",
-  }));
+  console.log(`  Found ${ids.length} IDs`);
+  return ids;
 }
 
-// Stage 2: Basic filter — duration, views, freshness
-function basicFilter(videos: VideoMeta[]): VideoMeta[] {
-  const oneYearAgo = new Date();
-  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 2);
-  const cutoff = oneYearAgo.toISOString().replace(/[-T:Z]/g, "").slice(0, 8);
-
-  const filtered = videos.filter((v) => {
-    if (v.duration < 15 || v.duration > 1200) return false;  // 15s–20min
-    if (v.view_count < 50) return false;
-    if (v.upload_date && v.upload_date < cutoff) return false;
-    return true;
-  });
-  console.log(`[Stage 2] Basic filter: ${videos.length} → ${filtered.length}`);
-  return filtered;
-}
-
-// Stage 3: Dedup — similar title + same duration = duplicate
-function dedup(videos: VideoMeta[]): VideoMeta[] {
-  const kept: VideoMeta[] = [];
-  for (const v of videos) {
-    const isDup = kept.some((k) => {
-      const titleSim = similarity(k.title.toLowerCase(), v.title.toLowerCase());
-      const sameDuration = Math.abs(k.duration - v.duration) < 3;
-      return titleSim > 0.7 && sameDuration;
-    });
-    if (!isDup) kept.push(v);
-  }
-  console.log(`[Stage 3] Dedup: ${videos.length} → ${kept.length}`);
-  return kept;
-}
-
-// Simple Jaccard similarity on words
-function similarity(a: string, b: string): number {
-  const setA = new Set(a.split(/\s+/));
-  const setB = new Set(b.split(/\s+/));
-  let inter = 0;
-  for (const w of setA) if (setB.has(w)) inter++;
-  const union = setA.size + setB.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
-
-// Stage 4: AI Ranking — Groq LLM scores relevance from metadata
-async function aiRank(videos: VideoMeta[], productName: string, topN = 8): Promise<VideoMeta[]> {
-  if (videos.length === 0) return [];
-
-  // If no titles available (HTML fallback), skip AI ranking and return as-is
-  const hasMetadata = videos.some((v) => v.title.length > 0);
-  if (!hasMetadata) {
-    console.log(`[Stage 4] No metadata for AI ranking, returning top ${topN} by order`);
-    return videos.slice(0, topN);
-  }
-
-  console.log(`[Stage 4] AI ranking ${videos.length} videos for "${productName}"`);
-
-  const listing = videos.map((v, i) =>
-    `${i + 1}. "${v.title || "(no title)"}" | ${v.channel || "?"} | ${v.duration}s | ${v.view_count} views | ${v.upload_date || "?"}`
-  ).join("\n");
-
+// AI generates short search queries from long product names
+async function generateSearchQueries(productName: string): Promise<string[]> {
+  const fallback = [
+    `${productName} รีวิว`,
+    `${productName} review`,
+  ];
   try {
     const res = await withRetry(() => groq.chat.completions.create({
       model: "meta-llama/llama-4-scout-17b-16e-instruct",
       messages: [{
         role: "user",
-        content: `สินค้า: "${productName}"
+        content: `ชื่อสินค้า: "${productName}"
 
-วีดีโอที่หามา:
-${listing}
+สร้าง YouTube search query สั้นๆ 4 อัน เพื่อหาวีดีโอรีวิว/แกะกล่องของสินค้านี้
+- แต่ละ query ไม่เกิน 5-6 คำ
+- ดึงเฉพาะชื่อแบรนด์ + ชื่อรุ่น + ประเภทสินค้า (ตัดคำขยายออก)
+- ผสมทั้งภาษาไทยและอังกฤษ
+- อันสุดท้ายเป็น shorts
 
-จัดอันดับวีดีโอที่น่าจะเป็น **รีวิว/แกะกล่อง/hands-on ของสินค้านี้จริงๆ** มากที่สุด
-- ให้น้ำหนัก: title ตรงกับสินค้า > เป็นรีวิวจริง > views เยอะ > ใหม่
-- ตัดวีดีโอที่เป็น compilation, ข่าว, MV, หรือไม่เกี่ยวข้องออก
-
-ตอบเป็น JSON array ของหมายเลข เรียงจากดีที่สุด เช่น [3,1,5,2]
+ตอบเป็น JSON array เช่น ["Xiaomi Mijia แอร์ รีวิว", "Mijia air conditioner review", "แอร์ Xiaomi แกะกล่อง", "Xiaomi Mijia air #shorts"]
 ตอบแค่ JSON ไม่ต้องอธิบาย`,
       }],
-      temperature: 0,
+      temperature: 0.3,
       max_tokens: 200,
     }));
-
     const text = res.choices[0]?.message?.content?.trim() ?? "[]";
-    // Extract JSON array from response
-    const match = text.match(/\[[\d,\s]+\]/);
+    const match = text.match(/\[[\s\S]*\]/);
     if (match) {
-      const indices: number[] = JSON.parse(match[0]);
-      const ranked = indices
-        .map((i) => videos[i - 1])
-        .filter(Boolean)
-        .slice(0, topN);
-      console.log(`[Stage 4] AI ranked top ${ranked.length}: ${ranked.map(v => v.id).join(", ")}`);
-      return ranked;
+      const queries: string[] = JSON.parse(match[0]);
+      if (queries.length > 0) {
+        console.log(`AI queries: ${queries.join(" | ")}`);
+        return queries.slice(0, 4);
+      }
     }
   } catch (e) {
-    console.warn("[Stage 4] AI ranking failed:", e instanceof Error ? e.message : e);
+    console.warn("AI query failed:", e instanceof Error ? e.message : e);
   }
-
-  // Fallback: return by view count
-  return [...videos].sort((a, b) => b.view_count - a.view_count).slice(0, topN);
-}
-
-// Stage 5: Thumbnail check — Groq Vision checks if thumbnail shows the actual product
-async function thumbnailCheck(videos: VideoMeta[], productName: string): Promise<VideoMeta[]> {
-  if (videos.length === 0) return [];
-  console.log(`[Stage 5] Thumbnail check for ${videos.length} videos`);
-
-  const results = await rateLimited(videos, async (v) => {
-    // Skip thumbnail check if no thumbnail URL
-    if (!v.thumbnail) {
-      console.log(`  Thumbnail ${v.id}: no URL, keeping`);
-      return v;
-    }
-    try {
-      const res = await withRetry(() => groq.chat.completions.create({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [{
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `ภาพนี้เป็น thumbnail ของวีดีโอ YouTube ชื่อ "${v.title}"
-สินค้าที่ต้องการคือ "${productName}"
-thumbnail นี้แสดงสินค้าดังกล่าว หรือเป็นรีวิว/แกะกล่องของสินค้าดังกล่าวหรือไม่?
-ตอบแค่ YES หรือ NO`,
-            },
-            { type: "image_url", image_url: { url: v.thumbnail } },
-          ],
-        }],
-        temperature: 0,
-        max_tokens: 10,
-      }));
-      const answer = res.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
-      const pass = answer.includes("YES");
-      console.log(`  Thumbnail ${v.id}: ${pass ? "PASS" : "SKIP"} (${answer})`);
-      return pass ? v : null;
-    } catch (e) {
-      console.warn(`  Thumbnail ${v.id}: error, keeping`, e instanceof Error ? e.message : e);
-      return v; // keep on error
-    }
-  }, { batchSize: 2, delayMs: 1500 });
-
-  const passed = results.filter(Boolean) as VideoMeta[];
-  console.log(`[Stage 5] Thumbnail: ${videos.length} → ${passed.length}`);
-  return passed;
+  return fallback;
 }
 
 // ============================================================
-// Video processing (kept from original)
+// Video processing
 // ============================================================
 
 async function extractThumbnails(videoPath: string): Promise<string[]> {
@@ -305,7 +117,7 @@ async function extractThumbnails(videoPath: string): Promise<string[]> {
       "-of", "csv=p=0", videoPath,
     ], 10000);
     duration = Math.max(3, Math.floor(parseFloat(out.trim())));
-  } catch { /* use default */ }
+  } catch { /* default */ }
 
   const timestamps = [
     Math.max(1, Math.floor(duration * 0.15)),
@@ -313,7 +125,7 @@ async function extractThumbnails(videoPath: string): Promise<string[]> {
     Math.floor(duration * 0.85),
   ];
 
-  const paths = await Promise.all(
+  return Promise.all(
     timestamps.map(async (ts, i) => {
       const thumbPath = videoPath.replace(".mp4", `_thumb${i}.jpg`);
       await run("ffmpeg", [
@@ -323,13 +135,14 @@ async function extractThumbnails(videoPath: string): Promise<string[]> {
       return thumbPath;
     })
   );
-  return paths;
 }
 
 async function hasFace(videoPath: string): Promise<{ detected: boolean; thumbPaths: string[] }> {
   const thumbPaths = await extractThumbnails(videoPath);
   try {
-    const results = await rateLimited(thumbPaths, async (thumbPath) => {
+    // Check sequentially with delay to avoid rate limits
+    const results: boolean[] = [];
+    for (const thumbPath of thumbPaths) {
       const imageBuffer = await readFile(thumbPath);
       const base64 = imageBuffer.toString("base64");
       const dataUrl = `data:image/jpeg;base64,${base64}`;
@@ -349,9 +162,12 @@ async function hasFace(videoPath: string): Promise<{ detected: boolean; thumbPat
 
       const answer = response.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
       console.log(`  Face (${thumbPath}): ${answer}`);
-      return answer.includes("YES");
-    }, { batchSize: 2, delayMs: 1500 });
-    return { detected: (results as boolean[]).some(Boolean), thumbPaths };
+      results.push(answer.includes("YES"));
+
+      // Small delay between calls
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { detected: results.some(Boolean), thumbPaths };
   } catch (e) {
     console.warn("Face detection failed:", e instanceof Error ? e.message : e);
     return { detected: false, thumbPaths };
@@ -402,7 +218,7 @@ async function downloadVideo(videoId: string, isShorts: boolean): Promise<string
     : `https://www.youtube.com/watch?v=${videoId}`;
   const outputPath = join(tmpdir(), `yt_${videoId}_${Date.now()}.mp4`);
 
-  console.log(`[Stage 6] Downloading ${videoId} (${isShorts ? "shorts" : "watch"})`);
+  console.log(`  Download ${videoId} (${isShorts ? "shorts" : "watch"})`);
 
   const args = [
     "-f", "best[height<=1080][ext=mp4]/best[ext=mp4]/best",
@@ -425,7 +241,7 @@ async function downloadVideo(videoId: string, isShorts: boolean): Promise<string
       await unlink(outputPath).catch(() => {});
       return null;
     }
-    console.log(`Downloaded ${videoId}: ${(st.size / 1024 / 1024).toFixed(1)}MB`);
+    console.log(`  Downloaded ${videoId}: ${(st.size / 1024 / 1024).toFixed(1)}MB`);
     return outputPath;
   } catch {
     return null;
@@ -434,7 +250,7 @@ async function downloadVideo(videoId: string, isShorts: boolean): Promise<string
 
 async function uploadProcessedVideo(processedPath: string): Promise<string | null> {
   const buffer = await readFile(processedPath);
-  console.log(`Processed portrait video: ${(buffer.length / 1024 / 1024).toFixed(1)}MB`);
+  console.log(`  Uploaded: ${(buffer.length / 1024 / 1024).toFixed(1)}MB`);
 
   const fileName = `video_${Date.now()}.mp4`;
   const supabase = createServerSupabase();
@@ -456,134 +272,54 @@ async function uploadProcessedVideo(processedPath: string): Promise<string | nul
 }
 
 // ============================================================
-// Main pipeline: 6-stage video search & download
+// Main: Search → Download → Face check → Upload (simple & reliable)
 // ============================================================
-
-// Generate short, effective YouTube search queries from product name using AI
-async function generateSearchQueries(productName: string): Promise<string[]> {
-  const fallback = [
-    `${productName} รีวิว`,
-    `${productName} review`,
-  ];
-  try {
-    const res = await withRetry(() => groq.chat.completions.create({
-      model: "meta-llama/llama-4-scout-17b-16e-instruct",
-      messages: [{
-        role: "user",
-        content: `ชื่อสินค้า: "${productName}"
-
-สร้าง YouTube search query สั้นๆ 3 อัน เพื่อหาวีดีโอรีวิว/แกะกล่องของสินค้านี้
-- แต่ละ query ไม่เกิน 5-6 คำ
-- ดึงเฉพาะชื่อแบรนด์ + ชื่อรุ่น + ประเภทสินค้า (ตัดคำขยายออก)
-- ผสมทั้งภาษาไทยและอังกฤษ
-
-ตอบเป็น JSON array เช่น ["EVA claw รองเท้า รีวิว", "EVA claw sandals review", "รองเท้า EVA แกะกล่อง"]
-ตอบแค่ JSON ไม่ต้องอธิบาย`,
-      }],
-      temperature: 0.3,
-      max_tokens: 200,
-    }));
-    const text = res.choices[0]?.message?.content?.trim() ?? "[]";
-    const match = text.match(/\[[\s\S]*\]/);
-    if (match) {
-      const queries: string[] = JSON.parse(match[0]);
-      if (queries.length > 0) {
-        console.log(`[Stage 0] AI search queries: ${queries.join(" | ")}`);
-        return queries.slice(0, 3);
-      }
-    }
-  } catch (e) {
-    console.warn("[Stage 0] AI query generation failed:", e instanceof Error ? e.message : e);
-  }
-  return fallback;
-}
 
 export async function searchAndDownloadMultipleYouTube(
   productName: string,
   count = 5
 ): Promise<string[]> {
   const cleanName = cleanProductName(productName);
-  console.log(`\n=== Video Pipeline: "${cleanName}" (need ${count}) ===`);
+  console.log(`\n=== Video Search: "${cleanName}" (need ${count}) ===`);
 
-  // Stage 0: AI generates short, effective search queries
+  // Step 1: AI generates short queries, then search YouTube
   const queries = await generateSearchQueries(cleanName);
 
-  const allResults: VideoMeta[] = [];
+  const allIds: string[] = [];
   const seenIds = new Set<string>();
 
   for (const q of queries) {
     try {
-      const results = await ytSearch(q, 10);
-      for (const r of results) {
-        if (!seenIds.has(r.id)) {
-          seenIds.add(r.id);
-          allResults.push(r);
+      const ids = await searchYouTube(q);
+      for (const id of ids) {
+        if (!seenIds.has(id)) {
+          seenIds.add(id);
+          allIds.push(id);
         }
       }
     } catch (e) {
-      console.warn(`[Stage 1] yt-dlp failed for "${q}":`, e instanceof Error ? e.message : e);
-      // Fallback to HTML scraping
-      try {
-        const fallbackResults = await htmlSearch(q, 10);
-        for (const r of fallbackResults) {
-          if (!seenIds.has(r.id)) {
-            seenIds.add(r.id);
-            allResults.push(r);
-          }
-        }
-      } catch (e2) {
-        console.warn(`[Stage 1] HTML fallback also failed for "${q}":`, e2 instanceof Error ? e2.message : e2);
-      }
+      console.warn(`Search failed "${q}":`, e instanceof Error ? e.message : e);
     }
   }
 
-  if (allResults.length === 0) {
-    console.warn("No search results at all");
-    return [];
-  }
+  console.log(`Total unique IDs: ${allIds.length}`);
+  if (allIds.length === 0) return [];
 
-  // Stage 2: Basic filter
-  const filtered = basicFilter(allResults);
-  if (filtered.length === 0) {
-    console.warn("All results filtered out");
-    return [];
-  }
-
-  // Stage 3: Dedup
-  const unique = dedup(filtered);
-
-  // Stage 4: AI Ranking — keep more candidates to survive later filtering
-  const ranked = await aiRank(unique, cleanName, Math.max(count * 2, 10));
-
-  // Stage 5: Thumbnail check
-  let checked = await thumbnailCheck(ranked, cleanName);
-
-  // If thumbnail check is too aggressive, fall back to ranked list
-  if (checked.length < count) {
-    console.log(`[Stage 5] Only ${checked.length} passed thumbnail, adding back ranked to reach ${count}`);
-    const checkedIds = new Set(checked.map((v) => v.id));
-    for (const v of ranked) {
-      if (!checkedIds.has(v.id)) checked.push(v);
-    }
-  }
-
-  // Stage 6: Download + portrait + face detection
-  // Priority: no-face first, then face videos to fill up to count
-  console.log(`[Stage 6] Downloading candidates (need ${count})`);
+  // Step 2: Download, process, face check — no-face first, face as backup
   const noFaceUrls: string[] = [];
   const faceUrls: string[] = [];
 
-  for (const video of checked) {
-    // Stop early if we already have enough no-face videos
+  for (const videoId of allIds) {
+    // Have enough no-face videos
     if (noFaceUrls.length >= count) break;
-    // Stop if we have enough total (no-face + face backup)
+    // Have enough total to fill count
     if (noFaceUrls.length + faceUrls.length >= count + 3) break;
 
     const tempFiles: string[] = [];
-    const isShorts = video.duration <= 60;
+    const isShorts = false; // try as watch first, yt-dlp handles both
 
     try {
-      const rawPath = await downloadVideo(video.id, isShorts);
+      const rawPath = await downloadVideo(videoId, isShorts);
       if (!rawPath) continue;
       tempFiles.push(rawPath);
 
@@ -597,22 +333,21 @@ export async function searchAndDownloadMultipleYouTube(
       if (!url) continue;
 
       if (faceResult.detected) {
-        console.log(`  ${video.id}: face → backup (${faceUrls.length + 1})`);
+        console.log(`  ${videoId}: face → backup (${faceUrls.length + 1})`);
         faceUrls.push(url);
       } else {
-        console.log(`  ${video.id}: no face → got ${noFaceUrls.length + 1}/${count}`);
+        console.log(`  ${videoId}: no face ✓ (${noFaceUrls.length + 1}/${count})`);
         noFaceUrls.push(url);
       }
     } catch (e) {
-      console.warn(`  ${video.id} failed:`, e instanceof Error ? e.message : e);
+      console.warn(`  ${videoId} failed:`, e instanceof Error ? e.message : e);
     } finally {
       for (const f of tempFiles) await unlink(f).catch(() => {});
     }
   }
 
-  // Combine: no-face first, then fill with face videos up to count
+  // Combine: no-face first, then face to fill up to count
   const urls = [...noFaceUrls, ...faceUrls].slice(0, count);
-
-  console.log(`=== Video Pipeline done: ${urls.length} videos ===\n`);
+  console.log(`=== Done: ${urls.length} videos (${noFaceUrls.length} no-face + ${Math.max(0, urls.length - noFaceUrls.length)} face) ===\n`);
   return urls;
 }
