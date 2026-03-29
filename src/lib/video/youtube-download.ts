@@ -5,6 +5,16 @@ import { join } from "path";
 import { createServerSupabase } from "../supabase-server";
 import { groq } from "../ai/groq";
 
+// Pick n random items from array (Fisher-Yates shuffle, take first n)
+function pickRandom<T>(arr: T[], n: number): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+}
+
 // Run a command and return stdout
 function run(
   cmd: string,
@@ -158,7 +168,7 @@ async function searchYouTube(
         [...html.matchAll(/\/shorts\/([a-zA-Z0-9_-]{11})/g)].map((m) => m[1])
       ),
     ];
-    return ids.slice(0, 3);
+    return pickRandom(ids, 3);
   }
 
   // Extract /watch?v={id} links
@@ -167,7 +177,7 @@ async function searchYouTube(
       [...html.matchAll(/\/watch\?v=([a-zA-Z0-9_-]{11})/g)].map((m) => m[1])
     ),
   ];
-  return ids.slice(0, 3);
+  return pickRandom(ids, 3);
 }
 
 // Download a single video with yt-dlp
@@ -237,6 +247,75 @@ async function uploadProcessedVideo(processedPath: string): Promise<string | nul
     .getPublicUrl(fileName);
 
   return publicUrl.publicUrl;
+}
+
+// Search YouTube and download multiple review videos, process to portrait, upload to Supabase
+export async function searchAndDownloadMultipleYouTube(
+  productName: string,
+  count = 3
+): Promise<string[]> {
+  const urls: string[] = [];
+  const usedVideoIds = new Set<string>();
+
+  const searchStrategies: { query: string; type: "shorts" | "watch" }[] = [
+    { query: `${productName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
+    { query: `${productName} รีวิว ภาษาไทย #shorts`, type: "shorts" },
+    { query: `${productName} unboxing ไทย #shorts`, type: "shorts" },
+    { query: `${productName} รีวิว #shorts`, type: "shorts" },
+    { query: `${productName} รีวิว shopee ไทย`, type: "watch" },
+  ];
+
+  for (const strategy of searchStrategies) {
+    if (urls.length >= count) break;
+
+    let videoIds: string[];
+    try {
+      videoIds = await searchYouTube(strategy.query, strategy.type);
+    } catch {
+      continue;
+    }
+
+    // Filter out already used IDs
+    videoIds = videoIds.filter((id) => !usedVideoIds.has(id));
+    if (videoIds.length === 0) continue;
+
+    console.log(`[multi] Found ${videoIds.length} new IDs for "${strategy.query}"`);
+
+    for (const videoId of videoIds) {
+      if (urls.length >= count) break;
+      usedVideoIds.add(videoId);
+      const tempFiles: string[] = [];
+
+      try {
+        const rawPath = await downloadVideo(videoId, strategy.type === "shorts");
+        if (!rawPath) continue;
+        tempFiles.push(rawPath);
+
+        const processedPath = await processToPortrait(rawPath);
+        tempFiles.push(processedPath);
+
+        const faceResult = await hasFace(processedPath);
+        tempFiles.push(...faceResult.thumbPaths);
+
+        // Upload regardless of face (we need 3 videos)
+        if (faceResult.detected) {
+          console.log(`[multi] Video ${videoId}: face detected but still using`);
+        }
+
+        const url = await uploadProcessedVideo(processedPath);
+        if (url) {
+          urls.push(url);
+          console.log(`[multi] Got ${urls.length}/${count} videos`);
+        }
+      } catch (e) {
+        console.warn(`[multi] Failed ${videoId}:`, e instanceof Error ? e.message : e);
+      } finally {
+        for (const f of tempFiles) await unlink(f).catch(() => {});
+      }
+    }
+  }
+
+  return urls;
 }
 
 // Search YouTube and download review video, process to portrait, upload to Supabase

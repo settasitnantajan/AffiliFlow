@@ -1,6 +1,6 @@
 import { createServerSupabase } from "./supabase-server";
 import { analyzeProductImage } from "./ai/vision";
-import { searchAndDownloadYouTube } from "./video/youtube-download";
+import { searchAndDownloadMultipleYouTube } from "./video/youtube-download";
 import { generateCaptionAndHashtags } from "./ai/caption";
 
 import { parsePrice, getErrorMessage } from "./utils";
@@ -113,61 +113,72 @@ export async function runPipeline(queueItemId?: string) {
       .update({ products_found: 1 })
       .eq("id", runId);
 
-    // ========== Step 3: YouTube video (with timeout) — 40% ==========
+    // ========== Step 3: YouTube videos x3 (with timeout) — 40% ==========
     await updateProgress("video", 40);
 
-    let videoUrl: string | null = null;
+    let videoUrls: string[] = [];
     try {
-      videoUrl = await withTimeout(searchAndDownloadYouTube(productName), 120000);
+      videoUrls = await withTimeout(searchAndDownloadMultipleYouTube(productName, 5), 420000);
     } catch (e) {
       console.warn("YouTube download failed:", e instanceof Error ? e.message : e);
     }
 
-    // Save video source
-    const { data: savedSource } = await supabase
-      .from("video_sources")
-      .insert({
+    const primaryVideoUrl = videoUrls[0] ?? null;
+
+    // Save video sources
+    for (const vUrl of videoUrls) {
+      await supabase.from("video_sources").insert({
         pipeline_run_id: runId,
         product_id: savedProduct?.id ?? null,
-        source_url: videoUrl ?? "",
+        source_url: vUrl,
         source_type: "youtube",
-        status: videoUrl ? "downloaded" : "failed",
-      })
-      .select()
-      .single();
+        status: "downloaded",
+      });
+    }
 
-    // Save production record
+    // Save production record (primary)
     const { data: savedProd } = await supabase
       .from("video_productions")
       .insert({
         pipeline_run_id: runId,
-        source_id: savedSource?.id ?? null,
-        output_url: videoUrl,
+        output_url: primaryVideoUrl,
         duration: 30,
-        status: videoUrl ? "done" : "failed",
-        error_log: videoUrl ? null : "No YouTube video found",
+        status: primaryVideoUrl ? "done" : "failed",
+        error_log: primaryVideoUrl ? null : "No YouTube video found",
       })
       .select()
       .single();
 
     const productionId = savedProd?.id ?? null;
 
-    // ========== Step 4: AI Caption + Hashtag — 70% ==========
+    // ========== Step 4: AI Caption + Hashtag x3 (unique) — 70% ==========
     await updateProgress("caption", 70);
 
-    const { caption: captionText, hashtags } = await generateCaptionAndHashtags([
-      {
-        name: productName,
-        price: numericPrice,
-        shopeeUrl: item.shopee_url,
-      },
-    ]);
+    const productInfo = [{
+      name: productName,
+      price: numericPrice,
+      shopeeUrl: item.shopee_url,
+    }];
 
+    // Generate 5 unique captions
+    const captionResults: { caption: string; hashtags: string[] }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const result = await generateCaptionAndHashtags(productInfo);
+      // Retry once if duplicate caption
+      if (captionResults.some((c) => c.caption === result.caption)) {
+        const retry = await generateCaptionAndHashtags(productInfo);
+        captionResults.push(retry);
+      } else {
+        captionResults.push(result);
+      }
+    }
+
+    // Save first caption to captions table
     await supabase.from("captions").insert({
       pipeline_run_id: runId,
       production_id: productionId,
-      caption_text: captionText,
-      hashtags,
+      caption_text: captionResults[0].caption,
+      hashtags: captionResults[0].hashtags,
       ai_model: "llama-3.3-70b",
     });
 
@@ -184,13 +195,21 @@ export async function runPipeline(queueItemId?: string) {
       },
     ];
 
+    // Build videos array: pair each video with a caption
+    const videosJson = videoUrls.map((vUrl, i) => ({
+      video_url: vUrl,
+      caption_text: captionResults[i]?.caption ?? captionResults[0].caption,
+      hashtags: captionResults[i]?.hashtags ?? captionResults[0].hashtags,
+    }));
+
     await supabase.from("video_results").insert({
       pipeline_run_id: runId,
       production_id: productionId,
-      video_url: videoUrl,
-      caption_text: captionText,
-      hashtags,
+      video_url: primaryVideoUrl,
+      caption_text: captionResults[0].caption,
+      hashtags: captionResults[0].hashtags,
       product_links: productLinks,
+      videos: videosJson,
       status: "ready",
     });
 
@@ -210,7 +229,7 @@ export async function runPipeline(queueItemId?: string) {
         status: "success",
         step_current: "done",
         progress: 100,
-        videos_produced: videoUrl ? 1 : 0,
+        videos_produced: videoUrls.length,
         completed_at: new Date().toISOString(),
       })
       .eq("id", runId);
@@ -221,9 +240,10 @@ export async function runPipeline(queueItemId?: string) {
       productName,
       price,
       commissionRate,
-      videoUrl,
-      captionPreview: captionText.slice(0, 100),
-      hashtagCount: hashtags.length,
+      videoUrl: primaryVideoUrl,
+      videosCount: videoUrls.length,
+      captionPreview: captionResults[0].caption.slice(0, 100),
+      hashtagCount: captionResults[0].hashtags.length,
     };
   } catch (e) {
     const errorMsg = getErrorMessage(e);

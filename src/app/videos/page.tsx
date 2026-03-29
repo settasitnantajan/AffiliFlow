@@ -5,6 +5,7 @@ import { CopyButton } from "@/components/copy-button";
 import { DownloadButton } from "@/components/download-button";
 import { CopyAllButton } from "@/components/copy-all-button";
 import Link from "next/link";
+import { DeleteVideoButton } from "@/components/delete-video-button";
 import { Film } from "lucide-react";
 import { formatThai } from "@/lib/utils";
 
@@ -16,6 +17,12 @@ interface ProductLink {
   url: string;
   price: string;
   commission_rate: string;
+}
+
+interface VideoItem {
+  video_url: string;
+  caption_text: string;
+  hashtags: string[];
 }
 
 export default async function VideosPage() {
@@ -32,12 +39,26 @@ export default async function VideosPage() {
       <div className="space-y-6">
         {videos && videos.length > 0 ? (
           videos.map((v) => {
-            const hashtagsText = v.hashtags?.join(" ") ?? "";
-            const fullCaption = `${v.caption_text ?? ""}\n\n${hashtagsText}`.trim();
+            // Use new multi-video format if available, fallback to legacy single
+            const multiVideos: VideoItem[] =
+              Array.isArray(v.videos) && v.videos.length > 0
+                ? (v.videos as VideoItem[])
+                : v.video_url
+                  ? [{
+                      video_url: v.video_url,
+                      caption_text: v.caption_text ?? "",
+                      hashtags: v.hashtags ?? [],
+                    }]
+                  : [];
 
             const links = (v.product_links as ProductLink[]) ?? [];
-            const linksText = links.map((p) => `${p.name}\n${p.url}`).join("\n\n");
-            const megaCopyText = [fullCaption, linksText].filter(Boolean).join("\n\n---\n\n");
+            const linksText = links.map((p) => p.url).join("\n");
+
+            // Mega copy = all captions + links
+            const allCaptions = multiVideos
+              .map((mv) => `${mv.caption_text}\n${mv.hashtags.join(" ")}`)
+              .join("\n\n---\n\n");
+            const megaCopyText = [allCaptions, linksText].filter(Boolean).join("\n\n---\n\n");
 
             return (
               <Card key={v.id} className={v.status !== "posted" ? "border-destructive border-2" : ""}>
@@ -46,50 +67,61 @@ export default async function VideosPage() {
                     <CardTitle className="text-sm">
                       {formatThai(v.created_at)}
                     </CardTitle>
-                    <Badge
-                      variant={v.status === "posted" ? "default" : "secondary"}
-                    >
-                      {v.status}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={v.status === "posted" ? "default" : "secondary"}
+                      >
+                        {v.status}
+                      </Badge>
+                      <DeleteVideoButton id={v.id} />
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Mega copy button */}
                   <CopyAllButton text={megaCopyText} videoId={v.id} />
 
-                  {/* Video + Download */}
-                  <div>
-                    {v.video_url ? (
-                      <div className="space-y-2">
-                        <video
-                          src={v.video_url}
-                          controls
-                          className="w-full max-w-50 sm:max-w-60 mx-auto rounded-lg"
-                        />
-                        <DownloadButton url={v.video_url} />
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground text-sm">No video</p>
-                    )}
-                  </div>
+                  {/* Videos + Captions */}
+                  {multiVideos.length > 0 ? (
+                    <div className="space-y-2">
+                      {multiVideos.map((mv, i) => {
+                        const captionWithTags = `${mv.caption_text}\n${mv.hashtags.join(" ")}`.trim();
+                        return (
+                          <div key={i} className="border rounded-lg p-2 flex gap-3">
+                            {/* Video thumbnail */}
+                            <div className="shrink-0 w-24 sm:w-32">
+                              <video
+                                src={mv.video_url}
+                                controls
+                                className="w-full rounded-md"
+                              />
+                              <DownloadButton url={mv.video_url} />
+                            </div>
 
-                  {/* Caption + Hashtags */}
-                  <div className="border-l-2 border-primary/30 pl-3">
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <p className="text-sm font-medium whitespace-nowrap">แคปชั่น + แฮชแท็ก:</p>
-                      <CopyButton text={fullCaption} videoId={v.id} />
+                            {/* Caption + actions */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <p className="text-[11px] font-bold text-muted-foreground">
+                                  #{i + 1}
+                                </p>
+                                <CopyButton text={captionWithTags} videoId={v.id} />
+                              </div>
+                              <p className="text-xs line-clamp-3">
+                                {mv.caption_text}
+                              </p>
+                              {mv.hashtags.length > 0 && (
+                                <p className="text-[11px] text-blue-400 mt-1 line-clamp-2">
+                                  {mv.hashtags.join(" ")}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div className="bg-muted p-3 rounded-lg">
-                      <p className="text-sm whitespace-pre-wrap">
-                        {v.caption_text ?? "-"}
-                      </p>
-                      {v.hashtags && (
-                        <p className="text-sm text-blue-400 mt-2">
-                          {v.hashtags.join(" ")}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                  ) : (
+                    <p className="text-muted-foreground text-sm">No video</p>
+                  )}
 
                   {/* Separator */}
                   <div className="border-t border-border" />

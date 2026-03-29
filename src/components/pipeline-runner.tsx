@@ -179,20 +179,34 @@ export function PipelineRunner() {
             </div>
 
             {/* Progress bar */}
-            <div className="h-3 w-full rounded-full bg-muted overflow-hidden">
+            <div className="h-4 w-full rounded-full bg-muted/50 overflow-hidden border border-white/10">
               <div
                 className="h-full rounded-full transition-all duration-700 ease-out"
                 style={{
                   width: `${progress}%`,
                   background:
                     progress >= 90
-                      ? "rgb(34 197 94)"
+                      ? "linear-gradient(90deg, #16a34a, #4ade80, #16a34a)"
                       : progress >= 40
-                      ? "rgb(59 130 246)"
-                      : "rgb(234 179 8)",
+                      ? "linear-gradient(90deg, #2563eb, #38bdf8, #a78bfa, #2563eb)"
+                      : "linear-gradient(90deg, #f59e0b, #fbbf24, #f59e0b)",
+                  backgroundSize: "200% 100%",
+                  animation: "shimmer 1.5s linear infinite",
+                  boxShadow:
+                    progress >= 90
+                      ? "0 0 12px #4ade80, 0 0 4px #22c55e"
+                      : progress >= 40
+                      ? "0 0 12px #60a5fa, 0 0 4px #3b82f6"
+                      : "0 0 12px #fbbf24, 0 0 4px #f59e0b",
                 }}
               />
             </div>
+            <style>{`
+              @keyframes shimmer {
+                0% { background-position: 200% 0; }
+                100% { background-position: -200% 0; }
+              }
+            `}</style>
 
             {/* Step indicators */}
             <div className="flex justify-between text-[10px] text-muted-foreground">
