@@ -257,12 +257,19 @@ export async function searchAndDownloadMultipleYouTube(
   const urls: string[] = [];
   const usedVideoIds = new Set<string>();
 
+  // Clean product name for search: remove store names, pipes, extra text
+  const cleanName = productName
+    .replace(/\s*\|\s*(Shopee|Lazada|Shopee Thailand|Lazada\.co\.th).*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80); // limit length for better search
+
   const searchStrategies: { query: string; type: "shorts" | "watch" }[] = [
-    { query: `${productName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
-    { query: `${productName} รีวิว ภาษาไทย #shorts`, type: "shorts" },
-    { query: `${productName} unboxing ไทย #shorts`, type: "shorts" },
-    { query: `${productName} รีวิว #shorts`, type: "shorts" },
-    { query: `${productName} รีวิว shopee ไทย`, type: "watch" },
+    { query: `${cleanName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
+    { query: `${cleanName} รีวิว ภาษาไทย #shorts`, type: "shorts" },
+    { query: `${cleanName} unboxing ไทย #shorts`, type: "shorts" },
+    { query: `${cleanName} รีวิว #shorts`, type: "shorts" },
+    { query: `${cleanName} รีวิว shopee ไทย`, type: "watch" },
   ];
 
   for (const strategy of searchStrategies) {
@@ -326,12 +333,19 @@ export async function searchAndDownloadYouTube(
     // Search strategies in priority order:
     // 1. Shorts search queries (vertical video, product-first content)
     // 2. Fallback to regular watch videos
+    // Clean product name for search
+    const cleanName = productName
+      .replace(/\s*\|\s*(Shopee|Lazada|Shopee Thailand|Lazada\.co\.th).*/gi, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
+
     const searchStrategies: { query: string; type: "shorts" | "watch" }[] = [
-      { query: `${productName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
-      { query: `${productName} รีวิว ภาษาไทย #shorts`, type: "shorts" },
-      { query: `${productName} unboxing ไทย #shorts`, type: "shorts" },
-      { query: `${productName} รีวิว #shorts`, type: "shorts" },
-      { query: `${productName} รีวิว shopee ไทย`, type: "watch" },
+      { query: `${cleanName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
+      { query: `${cleanName} รีวิว ภาษาไทย #shorts`, type: "shorts" },
+      { query: `${cleanName} unboxing ไทย #shorts`, type: "shorts" },
+      { query: `${cleanName} รีวิว #shorts`, type: "shorts" },
+      { query: `${cleanName} รีวิว shopee ไทย`, type: "watch" },
     ];
 
     for (const strategy of searchStrategies) {

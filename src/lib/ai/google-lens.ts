@@ -41,8 +41,11 @@ export async function identifyProductWithLens(
 
     const best = products[0];
 
+    // Clean title: remove "| Shopee Thailand", "| Lazada.co.th" etc.
+    const cleanTitle = best.title.replace(/\s*\|\s*(Shopee|Lazada|Lazada\.co\.th|Shopee Thailand).*$/i, "").trim();
+
     return {
-      product_name: best.title,
+      product_name: cleanTitle || best.title,
       price: best.price,
       products,
     };
