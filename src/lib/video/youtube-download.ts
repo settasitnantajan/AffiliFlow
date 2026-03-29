@@ -6,22 +6,11 @@ import { createServerSupabase } from "../supabase-server";
 import { groq } from "../ai/groq";
 import { cleanProductName } from "../utils";
 
-// Pick n random items from array (Fisher-Yates shuffle, take first n)
-function pickRandom<T>(arr: T[], n: number): T[] {
-  const copy = [...arr];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy.slice(0, n);
-}
+// ============================================================
+// Helpers
+// ============================================================
 
-// Run a command and return stdout
-function run(
-  cmd: string,
-  args: string[],
-  timeout = 90000
-): Promise<string> {
+function run(cmd: string, args: string[], timeout = 90000): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = execFile(cmd, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
       if (err) reject(err);
@@ -34,7 +23,193 @@ function run(
   });
 }
 
-// Extract thumbnail frames from a video (start, middle, end)
+// ============================================================
+// Video metadata from yt-dlp search
+// ============================================================
+
+interface VideoMeta {
+  id: string;
+  title: string;
+  duration: number;       // seconds
+  view_count: number;
+  like_count: number;
+  upload_date: string;    // YYYYMMDD
+  channel: string;
+  channel_follower_count: number;
+  thumbnail: string;      // URL
+  url: string;
+  description: string;
+}
+
+// Stage 1: Search — yt-dlp flat-playlist search, returns metadata without downloading
+async function ytSearch(query: string, limit = 20): Promise<VideoMeta[]> {
+  console.log(`[Stage 1] yt-dlp search: "${query}" (limit ${limit})`);
+  const out = await run("yt-dlp", [
+    "--flat-playlist", "--dump-json", "--no-download",
+    `ytsearch${limit}:${query}`,
+  ], 30000);
+
+  const results: VideoMeta[] = [];
+  for (const line of out.trim().split("\n")) {
+    if (!line) continue;
+    try {
+      const j = JSON.parse(line);
+      results.push({
+        id: j.id ?? "",
+        title: j.title ?? "",
+        duration: j.duration ?? 0,
+        view_count: j.view_count ?? 0,
+        like_count: j.like_count ?? 0,
+        upload_date: j.upload_date ?? "",
+        channel: j.channel ?? j.uploader ?? "",
+        channel_follower_count: j.channel_follower_count ?? 0,
+        thumbnail: j.thumbnail ?? j.thumbnails?.[0]?.url ?? "",
+        url: j.url ?? j.webpage_url ?? `https://www.youtube.com/watch?v=${j.id}`,
+        description: (j.description ?? "").slice(0, 500),
+      });
+    } catch { /* skip malformed lines */ }
+  }
+  console.log(`[Stage 1] Got ${results.length} results`);
+  return results;
+}
+
+// Stage 2: Basic filter — duration, views, freshness
+function basicFilter(videos: VideoMeta[]): VideoMeta[] {
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 2);
+  const cutoff = oneYearAgo.toISOString().replace(/[-T:Z]/g, "").slice(0, 8);
+
+  const filtered = videos.filter((v) => {
+    if (v.duration < 15 || v.duration > 900) return false;  // 15s–15min
+    if (v.view_count < 50) return false;
+    if (v.upload_date && v.upload_date < cutoff) return false;
+    return true;
+  });
+  console.log(`[Stage 2] Basic filter: ${videos.length} → ${filtered.length}`);
+  return filtered;
+}
+
+// Stage 3: Dedup — similar title + same duration = duplicate
+function dedup(videos: VideoMeta[]): VideoMeta[] {
+  const kept: VideoMeta[] = [];
+  for (const v of videos) {
+    const isDup = kept.some((k) => {
+      const titleSim = similarity(k.title.toLowerCase(), v.title.toLowerCase());
+      const sameDuration = Math.abs(k.duration - v.duration) < 3;
+      return titleSim > 0.7 && sameDuration;
+    });
+    if (!isDup) kept.push(v);
+  }
+  console.log(`[Stage 3] Dedup: ${videos.length} → ${kept.length}`);
+  return kept;
+}
+
+// Simple Jaccard similarity on words
+function similarity(a: string, b: string): number {
+  const setA = new Set(a.split(/\s+/));
+  const setB = new Set(b.split(/\s+/));
+  let inter = 0;
+  for (const w of setA) if (setB.has(w)) inter++;
+  const union = setA.size + setB.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+// Stage 4: AI Ranking — Groq LLM scores relevance from metadata
+async function aiRank(videos: VideoMeta[], productName: string, topN = 8): Promise<VideoMeta[]> {
+  if (videos.length === 0) return [];
+  console.log(`[Stage 4] AI ranking ${videos.length} videos for "${productName}"`);
+
+  const listing = videos.map((v, i) =>
+    `${i + 1}. "${v.title}" | ${v.channel} | ${v.duration}s | ${v.view_count} views | ${v.upload_date}`
+  ).join("\n");
+
+  try {
+    const res = await groq.chat.completions.create({
+      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      messages: [{
+        role: "user",
+        content: `สินค้า: "${productName}"
+
+วีดีโอที่หามา:
+${listing}
+
+จัดอันดับวีดีโอที่น่าจะเป็น **รีวิว/แกะกล่อง/hands-on ของสินค้านี้จริงๆ** มากที่สุด
+- ให้น้ำหนัก: title ตรงกับสินค้า > เป็นรีวิวจริง > views เยอะ > ใหม่
+- ตัดวีดีโอที่เป็น compilation, ข่าว, MV, หรือไม่เกี่ยวข้องออก
+
+ตอบเป็น JSON array ของหมายเลข เรียงจากดีที่สุด เช่น [3,1,5,2]
+ตอบแค่ JSON ไม่ต้องอธิบาย`,
+      }],
+      temperature: 0,
+      max_tokens: 200,
+    });
+
+    const text = res.choices[0]?.message?.content?.trim() ?? "[]";
+    // Extract JSON array from response
+    const match = text.match(/\[[\d,\s]+\]/);
+    if (match) {
+      const indices: number[] = JSON.parse(match[0]);
+      const ranked = indices
+        .map((i) => videos[i - 1])
+        .filter(Boolean)
+        .slice(0, topN);
+      console.log(`[Stage 4] AI ranked top ${ranked.length}: ${ranked.map(v => v.id).join(", ")}`);
+      return ranked;
+    }
+  } catch (e) {
+    console.warn("[Stage 4] AI ranking failed:", e instanceof Error ? e.message : e);
+  }
+
+  // Fallback: return by view count
+  return [...videos].sort((a, b) => b.view_count - a.view_count).slice(0, topN);
+}
+
+// Stage 5: Thumbnail check — Groq Vision checks if thumbnail shows the actual product
+async function thumbnailCheck(videos: VideoMeta[], productName: string): Promise<VideoMeta[]> {
+  if (videos.length === 0) return [];
+  console.log(`[Stage 5] Thumbnail check for ${videos.length} videos`);
+
+  const results = await Promise.all(
+    videos.map(async (v) => {
+      try {
+        const res = await groq.chat.completions.create({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages: [{
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `ภาพนี้เป็น thumbnail ของวีดีโอ YouTube ชื่อ "${v.title}"
+สินค้าที่ต้องการคือ "${productName}"
+thumbnail นี้แสดงสินค้าดังกล่าว หรือเป็นรีวิว/แกะกล่องของสินค้าดังกล่าวหรือไม่?
+ตอบแค่ YES หรือ NO`,
+              },
+              { type: "image_url", image_url: { url: v.thumbnail } },
+            ],
+          }],
+          temperature: 0,
+          max_tokens: 10,
+        });
+        const answer = res.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
+        const pass = answer.includes("YES");
+        console.log(`  Thumbnail ${v.id}: ${pass ? "PASS" : "SKIP"} (${answer})`);
+        return pass ? v : null;
+      } catch (e) {
+        console.warn(`  Thumbnail ${v.id}: error, keeping`, e instanceof Error ? e.message : e);
+        return v; // keep on error
+      }
+    })
+  );
+
+  const passed = results.filter(Boolean) as VideoMeta[];
+  console.log(`[Stage 5] Thumbnail: ${videos.length} → ${passed.length}`);
+  return passed;
+}
+
+// ============================================================
+// Video processing (kept from original)
+// ============================================================
+
 async function extractThumbnails(videoPath: string): Promise<string[]> {
   let duration = 10;
   try {
@@ -46,9 +221,9 @@ async function extractThumbnails(videoPath: string): Promise<string[]> {
   } catch { /* use default */ }
 
   const timestamps = [
-    Math.max(1, Math.floor(duration * 0.15)),  // early
-    Math.floor(duration * 0.5),                  // middle
-    Math.floor(duration * 0.85),                 // late
+    Math.max(1, Math.floor(duration * 0.15)),
+    Math.floor(duration * 0.5),
+    Math.floor(duration * 0.85),
   ];
 
   const paths = await Promise.all(
@@ -64,11 +239,9 @@ async function extractThumbnails(videoPath: string): Promise<string[]> {
   return paths;
 }
 
-// Use Groq Vision to check if a video has human faces (checks 3 frames)
 async function hasFace(videoPath: string): Promise<{ detected: boolean; thumbPaths: string[] }> {
   const thumbPaths = await extractThumbnails(videoPath);
   try {
-    // Check all frames in parallel
     const results = await Promise.all(
       thumbPaths.map(async (thumbPath) => {
         const imageBuffer = await readFile(thumbPath);
@@ -80,10 +253,7 @@ async function hasFace(videoPath: string): Promise<{ detected: boolean; thumbPat
           messages: [{
             role: "user",
             content: [
-              {
-                type: "text",
-                text: "Is there a human face clearly visible in this image? Answer only YES or NO.",
-              },
+              { type: "text", text: "Is there a human face clearly visible in this image? Answer only YES or NO." },
               { type: "image_url", image_url: { url: dataUrl } },
             ],
           }],
@@ -92,11 +262,10 @@ async function hasFace(videoPath: string): Promise<{ detected: boolean; thumbPat
         });
 
         const answer = response.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
-        console.log(`Face detection (${thumbPath}): ${answer}`);
+        console.log(`  Face (${thumbPath}): ${answer}`);
         return answer.includes("YES");
       })
     );
-
     return { detected: results.some(Boolean), thumbPaths };
   } catch (e) {
     console.warn("Face detection failed:", e instanceof Error ? e.message : e);
@@ -104,26 +273,21 @@ async function hasFace(videoPath: string): Promise<{ detected: boolean; thumbPat
   }
 }
 
-// Check if video is portrait using ffprobe
 async function isPortrait(filePath: string): Promise<boolean> {
   try {
     const out = await run("ffprobe", [
-      "-v", "error",
-      "-select_streams", "v:0",
+      "-v", "error", "-select_streams", "v:0",
       "-show_entries", "stream=width,height",
-      "-of", "csv=p=0",
-      filePath,
+      "-of", "csv=p=0", filePath,
     ], 10000);
     const [w, h] = out.trim().split(",").map(Number);
     console.log(`Video dimensions: ${w}x${h}`);
     return h > w;
   } catch {
-    // If ffprobe fails, assume landscape
     return false;
   }
 }
 
-// Post-process video to 1080x1920 portrait, max 30s
 async function processToPortrait(inputPath: string): Promise<string> {
   const outputPath = inputPath.replace(".mp4", "_portrait.mp4");
   const portrait = await isPortrait(inputPath);
@@ -147,51 +311,13 @@ async function processToPortrait(inputPath: string): Promise<string> {
   return outputPath;
 }
 
-// Search YouTube HTML and extract video IDs
-async function searchYouTube(
-  query: string,
-  type: "shorts" | "watch"
-): Promise<string[]> {
-  const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-  const res = await fetch(searchUrl, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    },
-    signal: AbortSignal.timeout(10000),
-  });
-  const html = await res.text();
-
-  if (type === "shorts") {
-    // Extract /shorts/{id} links
-    const ids = [
-      ...new Set(
-        [...html.matchAll(/\/shorts\/([a-zA-Z0-9_-]{11})/g)].map((m) => m[1])
-      ),
-    ];
-    return pickRandom(ids, 3);
-  }
-
-  // Extract /watch?v={id} links
-  const ids = [
-    ...new Set(
-      [...html.matchAll(/\/watch\?v=([a-zA-Z0-9_-]{11})/g)].map((m) => m[1])
-    ),
-  ];
-  return pickRandom(ids, 3);
-}
-
-// Download a single video with yt-dlp
-async function downloadVideo(
-  videoId: string,
-  isShorts: boolean
-): Promise<string | null> {
+async function downloadVideo(videoId: string, isShorts: boolean): Promise<string | null> {
   const url = isShorts
     ? `https://www.youtube.com/shorts/${videoId}`
     : `https://www.youtube.com/watch?v=${videoId}`;
   const outputPath = join(tmpdir(), `yt_${videoId}_${Date.now()}.mp4`);
 
-  console.log(`Trying yt-dlp (${isShorts ? "shorts" : "watch"}): ${videoId}`);
+  console.log(`[Stage 6] Downloading ${videoId} (${isShorts ? "shorts" : "watch"})`);
 
   const args = [
     "-f", "best[height<=1080][ext=mp4]/best[ext=mp4]/best",
@@ -201,14 +327,12 @@ async function downloadVideo(
     url,
   ];
 
-  // Only use download-sections for regular videos (shorts are already short)
   if (!isShorts) {
     args.splice(3, 0, "--download-sections", "*0:00-0:30", "--force-keyframes-at-cuts");
   }
 
   await run("yt-dlp", args, 90000);
 
-  // Verify file exists and is not too small
   try {
     const st = await stat(outputPath);
     if (st.size < 10000) {
@@ -223,7 +347,6 @@ async function downloadVideo(
   }
 }
 
-// Upload a processed video to Supabase and return public URL
 async function uploadProcessedVideo(processedPath: string): Promise<string | null> {
   const buffer = await readFile(processedPath);
   console.log(`Processed portrait video: ${(buffer.length / 1024 / 1024).toFixed(1)}MB`);
@@ -233,10 +356,7 @@ async function uploadProcessedVideo(processedPath: string): Promise<string | nul
 
   const { error: uploadError } = await supabase.storage
     .from("videos")
-    .upload(fileName, buffer, {
-      contentType: "video/mp4",
-      upsert: false,
-    });
+    .upload(fileName, buffer, { contentType: "video/mp4", upsert: false });
 
   if (uploadError) {
     console.error("Supabase upload error:", uploadError.message);
@@ -250,171 +370,128 @@ async function uploadProcessedVideo(processedPath: string): Promise<string | nul
   return publicUrl.publicUrl;
 }
 
-// Search YouTube and download multiple review videos, process to portrait, upload to Supabase
+// ============================================================
+// Main pipeline: 6-stage video search & download
+// ============================================================
+
 export async function searchAndDownloadMultipleYouTube(
   productName: string,
-  count = 3
+  count = 5
 ): Promise<string[]> {
-  const urls: string[] = [];
-  const usedVideoIds = new Set<string>();
-
   const cleanName = cleanProductName(productName);
+  console.log(`\n=== Video Pipeline: "${cleanName}" (need ${count}) ===`);
 
-  const searchStrategies: { query: string; type: "shorts" | "watch" }[] = [
-    { query: `${cleanName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
-    { query: `${cleanName} รีวิว ภาษาไทย #shorts`, type: "shorts" },
-    { query: `${cleanName} unboxing ไทย #shorts`, type: "shorts" },
-    { query: `${cleanName} รีวิว #shorts`, type: "shorts" },
-    { query: `${cleanName} รีวิว shopee ไทย`, type: "watch" },
+  // Stage 1: Search with multiple queries, merge results
+  const queries = [
+    `${cleanName} รีวิว แกะกล่อง`,
+    `${cleanName} review unboxing`,
+    `${cleanName} รีวิว shopee`,
   ];
 
-  for (const strategy of searchStrategies) {
-    if (urls.length >= count) break;
+  const allResults: VideoMeta[] = [];
+  const seenIds = new Set<string>();
 
-    let videoIds: string[];
+  for (const q of queries) {
     try {
-      videoIds = await searchYouTube(strategy.query, strategy.type);
-    } catch {
-      continue;
+      const results = await ytSearch(q, 10);
+      for (const r of results) {
+        if (!seenIds.has(r.id)) {
+          seenIds.add(r.id);
+          allResults.push(r);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Stage 1] Search failed for "${q}":`, e instanceof Error ? e.message : e);
     }
+  }
 
-    // Filter out already used IDs
-    videoIds = videoIds.filter((id) => !usedVideoIds.has(id));
-    if (videoIds.length === 0) continue;
+  if (allResults.length === 0) {
+    console.warn("No search results at all");
+    return [];
+  }
 
-    console.log(`[multi] Found ${videoIds.length} new IDs for "${strategy.query}"`);
+  // Stage 2: Basic filter
+  const filtered = basicFilter(allResults);
+  if (filtered.length === 0) {
+    console.warn("All results filtered out");
+    return [];
+  }
 
-    for (const videoId of videoIds) {
+  // Stage 3: Dedup
+  const unique = dedup(filtered);
+
+  // Stage 4: AI Ranking
+  const ranked = await aiRank(unique, cleanName, 8);
+
+  // Stage 5: Thumbnail check
+  const checked = await thumbnailCheck(ranked, cleanName);
+
+  // Stage 6: Download + portrait + face detection → skip if face detected
+  console.log(`[Stage 6] Downloading top candidates (need ${count} without faces)`);
+  const urls: string[] = [];
+
+  for (const video of checked) {
+    if (urls.length >= count) break;
+    const tempFiles: string[] = [];
+    const isShorts = video.duration <= 60;
+
+    try {
+      const rawPath = await downloadVideo(video.id, isShorts);
+      if (!rawPath) continue;
+      tempFiles.push(rawPath);
+
+      const processedPath = await processToPortrait(rawPath);
+      tempFiles.push(processedPath);
+
+      const faceResult = await hasFace(processedPath);
+      tempFiles.push(...faceResult.thumbPaths);
+
+      if (faceResult.detected) {
+        console.log(`  ${video.id}: face detected → skip`);
+        continue;
+      }
+
+      const url = await uploadProcessedVideo(processedPath);
+      if (url) {
+        urls.push(url);
+        console.log(`  Got ${urls.length}/${count} videos`);
+      }
+    } catch (e) {
+      console.warn(`  ${video.id} failed:`, e instanceof Error ? e.message : e);
+    } finally {
+      for (const f of tempFiles) await unlink(f).catch(() => {});
+    }
+  }
+
+  // Fallback: if not enough no-face videos, re-download with faces allowed
+  if (urls.length < count && checked.length > 0) {
+    console.log(`[Stage 6] Fallback: need ${count - urls.length} more, allowing faces`);
+    for (const video of checked) {
       if (urls.length >= count) break;
-      usedVideoIds.add(videoId);
       const tempFiles: string[] = [];
+      const isShorts = video.duration <= 60;
 
       try {
-        const rawPath = await downloadVideo(videoId, strategy.type === "shorts");
+        const rawPath = await downloadVideo(video.id, isShorts);
         if (!rawPath) continue;
         tempFiles.push(rawPath);
 
         const processedPath = await processToPortrait(rawPath);
         tempFiles.push(processedPath);
 
-        const faceResult = await hasFace(processedPath);
-        tempFiles.push(...faceResult.thumbPaths);
-
-        // Upload regardless of face (we need 3 videos)
-        if (faceResult.detected) {
-          console.log(`[multi] Video ${videoId}: face detected but still using`);
-        }
-
         const url = await uploadProcessedVideo(processedPath);
-        if (url) {
+        if (url && !urls.includes(url)) {
           urls.push(url);
-          console.log(`[multi] Got ${urls.length}/${count} videos`);
+          console.log(`  Fallback got ${urls.length}/${count}`);
         }
-      } catch (e) {
-        console.warn(`[multi] Failed ${videoId}:`, e instanceof Error ? e.message : e);
+      } catch {
+        // skip
       } finally {
         for (const f of tempFiles) await unlink(f).catch(() => {});
       }
     }
   }
 
+  console.log(`=== Video Pipeline done: ${urls.length} videos ===\n`);
   return urls;
-}
-
-// Search YouTube and download review video, process to portrait, upload to Supabase
-export async function searchAndDownloadYouTube(
-  productName: string
-): Promise<string | null> {
-  try {
-    // Search strategies in priority order:
-    // 1. Shorts search queries (vertical video, product-first content)
-    // 2. Fallback to regular watch videos
-    const cleanName = cleanProductName(productName);
-
-    const searchStrategies: { query: string; type: "shorts" | "watch" }[] = [
-      { query: `${cleanName} แกะกล่อง hands on ภาษาไทย #shorts`, type: "shorts" },
-      { query: `${cleanName} รีวิว ภาษาไทย #shorts`, type: "shorts" },
-      { query: `${cleanName} unboxing ไทย #shorts`, type: "shorts" },
-      { query: `${cleanName} รีวิว #shorts`, type: "shorts" },
-      { query: `${cleanName} รีวิว shopee ไทย`, type: "watch" },
-    ];
-
-    for (const strategy of searchStrategies) {
-      console.log(`Searching: "${strategy.query}" (${strategy.type})`);
-
-      let videoIds: string[];
-      try {
-        videoIds = await searchYouTube(strategy.query, strategy.type);
-      } catch (e) {
-        console.warn(`Search failed for "${strategy.query}":`, e instanceof Error ? e.message : e);
-        continue;
-      }
-
-      if (videoIds.length === 0) {
-        console.warn(`No ${strategy.type} results for: ${strategy.query}`);
-        continue;
-      }
-
-      console.log(`Found ${videoIds.length} ${strategy.type} IDs: ${videoIds.join(", ")}`);
-
-      // Try downloading each video — prefer no-face videos
-      let fallbackPath: string | null = null; // first successful video as fallback
-      const tempFiles: string[] = [];
-
-      for (const videoId of videoIds) {
-        let rawPath: string | null = null;
-        let processedPath: string | null = null;
-        try {
-          rawPath = await downloadVideo(videoId, strategy.type === "shorts");
-          if (!rawPath) continue;
-          tempFiles.push(rawPath);
-
-          // Post-process to 1080x1920 portrait
-          processedPath = await processToPortrait(rawPath);
-          tempFiles.push(processedPath);
-
-          // Check for face using 3 frames (start, middle, end)
-          const faceResult = await hasFace(processedPath);
-          tempFiles.push(...faceResult.thumbPaths);
-
-          if (faceResult.detected) {
-            console.log(`Video ${videoId}: face detected, saving as fallback`);
-            if (!fallbackPath) fallbackPath = processedPath;
-            continue;
-          }
-
-          // No face — use this video!
-          console.log(`Video ${videoId}: no face detected, using this one`);
-          const url = await uploadProcessedVideo(processedPath);
-          if (url) {
-            // Cleanup all temp files
-            for (const f of tempFiles) await unlink(f).catch(() => {});
-            return url;
-          }
-        } catch (e) {
-          console.warn(
-            `Failed video ${videoId}:`,
-            e instanceof Error ? e.message : e
-          );
-          continue;
-        }
-      }
-
-      // All videos had faces — use fallback
-      if (fallbackPath) {
-        console.log("All videos have faces, using fallback");
-        const url = await uploadProcessedVideo(fallbackPath);
-        for (const f of tempFiles) await unlink(f).catch(() => {});
-        if (url) return url;
-      }
-
-      // Cleanup if nothing worked
-      for (const f of tempFiles) await unlink(f).catch(() => {});
-    }
-
-    return null;
-  } catch (e) {
-    console.error("YouTube download error:", e);
-    return null;
-  }
 }
