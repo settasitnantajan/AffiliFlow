@@ -17,8 +17,14 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Trends API — allow through (no auth needed for fetch)
-  if (pathname.startsWith("/api/trends")) {
+  // Public API routes (called from authenticated pages)
+  if (
+    pathname.startsWith("/api/trends") ||
+    pathname.startsWith("/api/production") ||
+    pathname.startsWith("/api/videos") ||
+    pathname.startsWith("/api/badge-counts") ||
+    pathname.startsWith("/api/queue")
+  ) {
     return NextResponse.next();
   }
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,25 +14,34 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
-export function DeleteVideoButton({ id }: { id: string }) {
+export function RemoveVideoItemButton({
+  videoResultId,
+  videoUrl,
+}: {
+  videoResultId: string;
+  videoUrl: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
-  const handleDelete = async () => {
-    setDeleting(true);
+  const handleRemove = async () => {
+    setRemoving(true);
     try {
-      const res = await fetch(`/api/videos/${id}`, { method: "DELETE" });
+      const res = await fetch("/api/videos/remove-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoResultId, videoUrl }),
+      });
       if (res.ok) {
         toast.success("ลบวีดีโอแล้ว");
         setOpen(false);
         router.refresh();
-        window.dispatchEvent(new Event("badge-refresh"));
       } else {
         toast.error("ลบไม่สำเร็จ");
       }
     } finally {
-      setDeleting(false);
+      setRemoving(false);
     }
   };
 
@@ -40,19 +49,18 @@ export function DeleteVideoButton({ id }: { id: string }) {
     <>
       <button
         onClick={() => setOpen(true)}
-        disabled={deleting}
-        className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
-        title="ลบ"
+        className="p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+        title="ลบวีดีโอนี้"
       >
-        <Trash2 className="h-4 w-4" />
+        <X className="h-3.5 w-3.5" />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>ลบการ์ดวีดีโอนี้?</DialogTitle>
+            <DialogTitle>ลบวีดีโอนี้?</DialogTitle>
             <DialogDescription>
-              วีดีโอทั้งหมดในการ์ดนี้จะถูกลบ ไม่สามารถกู้คืนได้
+              วีดีโอจะถูกลบออกจากรายการ ไม่สามารถกู้คืนได้
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -61,10 +69,10 @@ export function DeleteVideoButton({ id }: { id: string }) {
             </Button>
             <Button
               variant="destructive"
-              onClick={handleDelete}
-              disabled={deleting}
+              onClick={handleRemove}
+              disabled={removing}
             >
-              {deleting ? "กำลังลบ..." : "ลบทั้งการ์ด"}
+              {removing ? "กำลังลบ..." : "ลบ"}
             </Button>
           </DialogFooter>
         </DialogContent>

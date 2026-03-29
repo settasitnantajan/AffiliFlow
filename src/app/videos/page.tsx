@@ -3,9 +3,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/copy-button";
 import { DownloadButton } from "@/components/download-button";
-import { CopyAllButton } from "@/components/copy-all-button";
 import Link from "next/link";
 import { DeleteVideoButton } from "@/components/delete-video-button";
+import { AddToProductionButton } from "@/components/add-to-production-button";
+import { RemoveVideoItemButton } from "@/components/remove-video-item-button";
 import { Film } from "lucide-react";
 import { formatThai } from "@/lib/utils";
 
@@ -27,11 +28,21 @@ interface VideoItem {
 
 export default async function VideosPage() {
   const supabase = createServerSupabase();
-  const { data: videos } = await supabase
-    .from("video_results")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(20);
+
+  const [{ data: videos }, { data: productionItems }] = await Promise.all([
+    supabase
+      .from("video_results")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("production_items")
+      .select("video_url"),
+  ]);
+
+  const productionUrls = new Set(
+    (productionItems ?? []).map((p: { video_url: string }) => p.video_url)
+  );
 
   return (
     <div>
@@ -39,7 +50,6 @@ export default async function VideosPage() {
       <div className="space-y-6">
         {videos && videos.length > 0 ? (
           videos.map((v) => {
-            // Use new multi-video format if available, fallback to legacy single
             const multiVideos: VideoItem[] =
               Array.isArray(v.videos) && v.videos.length > 0
                 ? (v.videos as VideoItem[])
@@ -52,13 +62,6 @@ export default async function VideosPage() {
                   : [];
 
             const links = (v.product_links as ProductLink[]) ?? [];
-            const linksText = links.map((p) => p.url).join("\n");
-
-            // Mega copy = all captions + links
-            const allCaptions = multiVideos
-              .map((mv) => `${mv.caption_text}\n${mv.hashtags.join(" ")}`)
-              .join("\n\n---\n\n");
-            const megaCopyText = [allCaptions, linksText].filter(Boolean).join("\n\n---\n\n");
 
             return (
               <Card key={v.id} className={v.status !== "posted" ? "border-destructive border-2" : ""}>
@@ -78,14 +81,12 @@ export default async function VideosPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {/* Mega copy button */}
-                  <CopyAllButton text={megaCopyText} videoId={v.id} />
-
                   {/* Videos + Captions */}
                   {multiVideos.length > 0 ? (
                     <div className="space-y-2">
                       {multiVideos.map((mv, i) => {
                         const captionWithTags = `${mv.caption_text}\n${mv.hashtags.join(" ")}`.trim();
+                        const alreadyInProduction = productionUrls.has(mv.video_url);
                         return (
                           <div key={i} className="border rounded-lg p-2 flex gap-3">
                             {/* Video thumbnail */}
@@ -104,7 +105,21 @@ export default async function VideosPage() {
                                 <p className="text-[11px] font-bold text-muted-foreground">
                                   #{i + 1}
                                 </p>
-                                <CopyButton text={captionWithTags} videoId={v.id} />
+                                <div className="flex items-center gap-1">
+                                  <AddToProductionButton
+                                    videoResultId={v.id}
+                                    videoUrl={mv.video_url}
+                                    captionText={mv.caption_text}
+                                    hashtags={mv.hashtags}
+                                    productLinks={links}
+                                    alreadyAdded={alreadyInProduction}
+                                  />
+                                  <CopyButton text={captionWithTags} videoId={v.id} />
+                                  <RemoveVideoItemButton
+                                    videoResultId={v.id}
+                                    videoUrl={mv.video_url}
+                                  />
+                                </div>
                               </div>
                               <p className="text-xs line-clamp-3">
                                 {mv.caption_text}

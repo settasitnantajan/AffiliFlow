@@ -13,6 +13,8 @@ import {
   Zap,
   Settings,
   TrendingUp,
+  Clapperboard,
+  Loader2,
 } from "lucide-react";
 
 const navItems = [
@@ -22,6 +24,7 @@ const navItems = [
   { href: "/upload", label: "อัพโหลด", icon: Upload, badgeKey: null },
   { href: "/queue", label: "คิว", icon: ListOrdered, badgeKey: "queue" as const },
   { href: "/videos", label: "วีดีโอ", icon: Film, badgeKey: "videos" as const },
+  { href: "/production", label: "Production", icon: Clapperboard, badgeKey: "production" as const },
   { href: "/pipeline", label: "Pipeline", icon: Zap, badgeKey: null },
   { href: "/settings", label: "ตั้งค่า", icon: Settings, badgeKey: null },
 ];
@@ -35,12 +38,16 @@ const bottomTabs = [
   { href: "/videos", label: "วีดีโอ", icon: Film, badgeKey: "videos" as const },
 ];
 
-type BadgeCounts = { queue: number; videos: number };
+type BadgeCounts = { queue: number; videos: number; production: number };
 
-function BadgeDot({ count }: { count: number }) {
+function BadgeDot({ count, color = "red" }: { count: number; color?: "red" | "green" }) {
   if (count <= 0) return null;
   return (
-    <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-4 h-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold leading-none">
+    <span className={`absolute -top-1 -right-1 flex items-center justify-center min-w-4 h-4 px-1 rounded-full text-[10px] font-bold leading-none ${
+      color === "green"
+        ? "bg-green-500 text-white"
+        : "bg-destructive text-destructive-foreground"
+    }`}>
       {count > 99 ? "99+" : count}
     </span>
   );
@@ -48,7 +55,8 @@ function BadgeDot({ count }: { count: number }) {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [badges, setBadges] = useState<BadgeCounts>({ queue: 0, videos: 0 });
+  const [badges, setBadges] = useState<BadgeCounts>({ queue: 0, videos: 0, production: 0 });
+  const [pipelineRunning, setPipelineRunning] = useState(false);
 
   useEffect(() => {
     async function fetchBadges() {
@@ -59,15 +67,31 @@ export function Sidebar() {
         // ignore
       }
     }
+
+    async function checkPipeline() {
+      try {
+        const res = await fetch("/api/pipeline/status");
+        if (res.ok) {
+          const data = await res.json();
+          setPipelineRunning(data.running === true);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     fetchBadges();
-    const interval = setInterval(fetchBadges, 30000);
+    checkPipeline();
+    const badgeInterval = setInterval(fetchBadges, 30000);
+    const pipelineInterval = setInterval(checkPipeline, 3000);
 
     // Listen for badge-refresh events from other components
-    const onRefresh = () => fetchBadges();
+    const onRefresh = () => { fetchBadges(); checkPipeline(); };
     window.addEventListener("badge-refresh", onRefresh);
 
     return () => {
-      clearInterval(interval);
+      clearInterval(badgeInterval);
+      clearInterval(pipelineInterval);
       window.removeEventListener("badge-refresh", onRefresh);
     };
   }, []);
@@ -80,7 +104,7 @@ export function Sidebar() {
       .catch(() => {});
   }, [pathname]);
 
-  const getBadge = (key: "queue" | "videos" | null) => {
+  const getBadge = (key: "queue" | "videos" | "production" | null) => {
     if (!key) return 0;
     return badges[key] ?? 0;
   };
@@ -110,7 +134,11 @@ export function Sidebar() {
             )}
             aria-label="Pipeline"
           >
-            <Zap className="h-5 w-5" />
+            {pipelineRunning ? (
+              <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+            ) : (
+              <Zap className="h-5 w-5" />
+            )}
           </Link>
           <Link
             href="/settings"
@@ -172,10 +200,18 @@ export function Sidebar() {
                     : "text-muted-foreground"
                 )}
               >
-                <Icon className="h-4 w-4" />
+                {item.href === "/pipeline" && pipelineRunning ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                ) : (
+                  <Icon className="h-4 w-4" />
+                )}
                 <span className="flex-1">{item.label}</span>
                 {badgeCount > 0 && (
-                  <span className="flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[11px] font-bold">
+                  <span className={`flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold ${
+                    item.badgeKey === "production"
+                      ? "bg-green-500 text-white"
+                      : "bg-destructive text-destructive-foreground"
+                  }`}>
                     {badgeCount}
                   </span>
                 )}
