@@ -16,6 +16,7 @@ import {
 import { DeleteQueueButton } from "@/components/delete-queue-button";
 import { Play, Loader2, Eye } from "lucide-react";
 import { formatThai } from "@/lib/utils";
+import { toast } from "sonner";
 
 const statusColors: Record<
   string,
@@ -148,11 +149,16 @@ export function QueueList({ items }: { items: QueueItem[] }) {
   const runSingle = async (id: string) => {
     setRunningIds((prev) => new Set(prev).add(id));
     try {
-      await fetch("/api/pipeline/run-items", {
+      const res = await fetch("/api/pipeline/run-items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: [id] }),
       });
+      if (res.ok) {
+        toast.success("Pipeline เสร็จสิ้น");
+      } else {
+        toast.error("Pipeline ล้มเหลว");
+      }
       router.refresh();
       window.dispatchEvent(new Event("badge-refresh"));
     } finally {
@@ -169,12 +175,18 @@ export function QueueList({ items }: { items: QueueItem[] }) {
     const ids = Array.from(selected);
     setBatchRunning(true);
     setRunningIds(new Set(ids));
+    toast.info(`กำลังรัน ${ids.length} รายการ...`);
     try {
-      await fetch("/api/pipeline/run-items", {
+      const res = await fetch("/api/pipeline/run-items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       });
+      if (res.ok) {
+        toast.success(`รันเสร็จ ${ids.length} รายการ`);
+      } else {
+        toast.error("Pipeline ล้มเหลว");
+      }
       setSelected(new Set());
       router.refresh();
       window.dispatchEvent(new Event("badge-refresh"));
@@ -272,13 +284,13 @@ export function QueueList({ items }: { items: QueueItem[] }) {
                   >
                     <Eye className="h-3 w-3" />
                   </Button>
-                  {isPending && (
+                  {(isPending || item.status === "done" || item.status === "failed") && (
                     <Button
                       variant="outline"
                       size="icon-xs"
                       onClick={() => runSingle(item.id)}
                       disabled={isAnyRunning}
-                      title="รัน Pipeline"
+                      title={isPending ? "รัน Pipeline" : "รันซ้ำ"}
                     >
                       {isItemRunning ? (
                         <Loader2 className="h-3 w-3 animate-spin" />

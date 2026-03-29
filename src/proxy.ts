@@ -17,6 +17,11 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Trends API — allow through (no auth needed for fetch)
+  if (pathname.startsWith("/api/trends")) {
+    return NextResponse.next();
+  }
+
   // Pipeline API requires a secret token
   if (pathname.startsWith("/api/pipeline")) {
     const secret = req.headers.get("x-pipeline-secret") ??

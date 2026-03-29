@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 export function DeleteQueueButton({ id }: { id: string }) {
   const router = useRouter();
@@ -14,7 +15,11 @@ export function DeleteQueueButton({ id }: { id: string }) {
     try {
       const res = await fetch(`/api/queue/${id}`, { method: "DELETE" });
       if (res.ok) {
+        toast.success("ลบรายการแล้ว");
         router.refresh();
+        window.dispatchEvent(new Event("badge-refresh"));
+      } else {
+        toast.error("ลบไม่สำเร็จ");
       }
     } finally {
       setDeleting(false);

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 export function CopyButton({
   text,
@@ -19,6 +20,7 @@ export function CopyButton({
   const handleCopy = async () => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
+    toast.success("คัดลอกแล้ว");
 
     if (videoId) {
       await fetch("/api/videos/mark-posted", {

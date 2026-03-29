@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, X, ImagePlus } from "lucide-react";
+import { toast } from "sonner";
 
 const MAX_ITEMS = 30;
 
@@ -137,7 +138,7 @@ export default function UploadPage() {
   const handleSubmit = async () => {
     const validItems = items.filter((item) => item.shopee_url.trim());
     if (validItems.length === 0) {
-      setMessage("กรุณาใส่ Shopee URL อย่างน้อย 1 รายการ");
+      toast.error("กรุณาใส่ Shopee URL อย่างน้อย 1 รายการ");
       return;
     }
 
@@ -160,13 +161,15 @@ export default function UploadPage() {
     );
     const successCount = results.filter((r) => r.status === "fulfilled").length;
 
-    setMessage(
-      `เพิ่มเข้าคิวสำเร็จ ${successCount}/${validItems.length} รายการ`
-    );
     if (successCount > 0) {
+      toast.success(`เพิ่มเข้าคิวสำเร็จ ${successCount}/${validItems.length} รายการ`);
       setItems([emptyItem()]);
       window.dispatchEvent(new Event("badge-refresh"));
     }
+    if (successCount < validItems.length) {
+      toast.error(`ล้มเหลว ${validItems.length - successCount} รายการ`);
+    }
+    setMessage("");
     setLoading(false);
   };
 

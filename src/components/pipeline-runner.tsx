@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { toast } from "sonner";
 
 const stepLabels: Record<string, string> = {
   queue: "กำลังดึงสินค้าจากคิว...",
@@ -74,13 +75,14 @@ export function PipelineRunner() {
           wasRunningRef.current = false;
           if (data.lastRun.status === "success") {
             setResult({ type: "success", message: "Pipeline เสร็จสิ้น!" });
+            toast.success("Pipeline เสร็จสิ้น!");
           } else if (data.lastRun.status === "failed") {
-            setResult({
-              type: "error",
-              message: data.lastRun.error_log ?? "Pipeline ล้มเหลว",
-            });
+            const errMsg = data.lastRun.error_log ?? "Pipeline ล้มเหลว";
+            setResult({ type: "error", message: errMsg });
+            toast.error(errMsg);
           }
           router.refresh();
+          window.dispatchEvent(new Event("badge-refresh"));
         }
       }
     } catch {
