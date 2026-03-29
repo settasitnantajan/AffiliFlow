@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
+import { PipelineFloating } from "./pipeline-floating";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -17,6 +18,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 p-4 md:p-6 overflow-auto pt-16 md:pt-6 pb-20 md:pb-6">
         {children}
       </main>
+      <PipelineFloating />
     </div>
   );
 }
