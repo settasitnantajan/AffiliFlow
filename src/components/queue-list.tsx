@@ -122,7 +122,9 @@ function QueueDetailModal({
 export function QueueList({ items }: { items: QueueItem[] }) {
   const router = useRouter();
   const pending = items.filter((q) => q.status === "queued");
-  const others = items.filter((q) => q.status !== "queued");
+  const others = items
+    .filter((q) => q.status !== "queued")
+    .sort((a, b) => new Date(b.processed_at ?? b.created_at).getTime() - new Date(a.processed_at ?? a.created_at).getTime());
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());

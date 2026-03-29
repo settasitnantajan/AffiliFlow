@@ -127,6 +127,17 @@ export function Sidebar() {
             <BadgeDot count={getBadge("queue")} />
           </Link>
           <Link
+            href="/production"
+            className={cn(
+              "relative p-2 rounded-lg hover:bg-accent",
+              pathname === "/production" ? "bg-accent" : ""
+            )}
+            aria-label="Production"
+          >
+            <Clapperboard className="h-5 w-5" />
+            <BadgeDot count={getBadge("production")} color="green" />
+          </Link>
+          <Link
             href="/pipeline"
             className={cn(
               "p-2 rounded-lg hover:bg-accent",
