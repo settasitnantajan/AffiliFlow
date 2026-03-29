@@ -10,6 +10,44 @@ import { cleanProductName } from "../utils";
 // Helpers
 // ============================================================
 
+// Rate-limited concurrency: run async tasks in batches with delay between batches
+async function rateLimited<T>(
+  items: T[],
+  fn: (item: T) => Promise<unknown>,
+  { batchSize = 2, delayMs = 1500 } = {}
+): Promise<Awaited<ReturnType<typeof fn>>[]> {
+  const results: Awaited<ReturnType<typeof fn>>[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...(batchResults as Awaited<ReturnType<typeof fn>>[]));
+    // Delay between batches (skip after last batch)
+    if (i + batchSize < items.length) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return results;
+}
+
+// Retry with exponential backoff for Groq 429 errors
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: unknown) {
+      const status = (e as { status?: number })?.status;
+      if (status === 429 && attempt < maxRetries) {
+        const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
+        console.warn(`[Rate limit] 429 hit, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("withRetry: should not reach here");
+}
+
 function run(cmd: string, args: string[], timeout = 90000): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = execFile(cmd, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
@@ -124,7 +162,7 @@ async function aiRank(videos: VideoMeta[], productName: string, topN = 8): Promi
   ).join("\n");
 
   try {
-    const res = await groq.chat.completions.create({
+    const res = await withRetry(() => groq.chat.completions.create({
       model: "meta-llama/llama-4-scout-17b-16e-instruct",
       messages: [{
         role: "user",
@@ -142,7 +180,7 @@ ${listing}
       }],
       temperature: 0,
       max_tokens: 200,
-    });
+    }));
 
     const text = res.choices[0]?.message?.content?.trim() ?? "[]";
     // Extract JSON array from response
@@ -169,37 +207,35 @@ async function thumbnailCheck(videos: VideoMeta[], productName: string): Promise
   if (videos.length === 0) return [];
   console.log(`[Stage 5] Thumbnail check for ${videos.length} videos`);
 
-  const results = await Promise.all(
-    videos.map(async (v) => {
-      try {
-        const res = await groq.chat.completions.create({
-          model: "meta-llama/llama-4-scout-17b-16e-instruct",
-          messages: [{
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `ภาพนี้เป็น thumbnail ของวีดีโอ YouTube ชื่อ "${v.title}"
+  const results = await rateLimited(videos, async (v) => {
+    try {
+      const res = await withRetry(() => groq.chat.completions.create({
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `ภาพนี้เป็น thumbnail ของวีดีโอ YouTube ชื่อ "${v.title}"
 สินค้าที่ต้องการคือ "${productName}"
 thumbnail นี้แสดงสินค้าดังกล่าว หรือเป็นรีวิว/แกะกล่องของสินค้าดังกล่าวหรือไม่?
 ตอบแค่ YES หรือ NO`,
-              },
-              { type: "image_url", image_url: { url: v.thumbnail } },
-            ],
-          }],
-          temperature: 0,
-          max_tokens: 10,
-        });
-        const answer = res.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
-        const pass = answer.includes("YES");
-        console.log(`  Thumbnail ${v.id}: ${pass ? "PASS" : "SKIP"} (${answer})`);
-        return pass ? v : null;
-      } catch (e) {
-        console.warn(`  Thumbnail ${v.id}: error, keeping`, e instanceof Error ? e.message : e);
-        return v; // keep on error
-      }
-    })
-  );
+            },
+            { type: "image_url", image_url: { url: v.thumbnail } },
+          ],
+        }],
+        temperature: 0,
+        max_tokens: 10,
+      }));
+      const answer = res.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
+      const pass = answer.includes("YES");
+      console.log(`  Thumbnail ${v.id}: ${pass ? "PASS" : "SKIP"} (${answer})`);
+      return pass ? v : null;
+    } catch (e) {
+      console.warn(`  Thumbnail ${v.id}: error, keeping`, e instanceof Error ? e.message : e);
+      return v; // keep on error
+    }
+  }, { batchSize: 2, delayMs: 1500 });
 
   const passed = results.filter(Boolean) as VideoMeta[];
   console.log(`[Stage 5] Thumbnail: ${videos.length} → ${passed.length}`);
@@ -242,31 +278,29 @@ async function extractThumbnails(videoPath: string): Promise<string[]> {
 async function hasFace(videoPath: string): Promise<{ detected: boolean; thumbPaths: string[] }> {
   const thumbPaths = await extractThumbnails(videoPath);
   try {
-    const results = await Promise.all(
-      thumbPaths.map(async (thumbPath) => {
-        const imageBuffer = await readFile(thumbPath);
-        const base64 = imageBuffer.toString("base64");
-        const dataUrl = `data:image/jpeg;base64,${base64}`;
+    const results = await rateLimited(thumbPaths, async (thumbPath) => {
+      const imageBuffer = await readFile(thumbPath);
+      const base64 = imageBuffer.toString("base64");
+      const dataUrl = `data:image/jpeg;base64,${base64}`;
 
-        const response = await groq.chat.completions.create({
-          model: "meta-llama/llama-4-scout-17b-16e-instruct",
-          messages: [{
-            role: "user",
-            content: [
-              { type: "text", text: "Is there a human face clearly visible in this image? Answer only YES or NO." },
-              { type: "image_url", image_url: { url: dataUrl } },
-            ],
-          }],
-          temperature: 0,
-          max_tokens: 10,
-        });
+      const response = await withRetry(() => groq.chat.completions.create({
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "Is there a human face clearly visible in this image? Answer only YES or NO." },
+            { type: "image_url", image_url: { url: dataUrl } },
+          ],
+        }],
+        temperature: 0,
+        max_tokens: 10,
+      }));
 
-        const answer = response.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
-        console.log(`  Face (${thumbPath}): ${answer}`);
-        return answer.includes("YES");
-      })
-    );
-    return { detected: results.some(Boolean), thumbPaths };
+      const answer = response.choices[0]?.message?.content?.trim().toUpperCase() ?? "";
+      console.log(`  Face (${thumbPath}): ${answer}`);
+      return answer.includes("YES");
+    }, { batchSize: 2, delayMs: 1500 });
+    return { detected: (results as boolean[]).some(Boolean), thumbPaths };
   } catch (e) {
     console.warn("Face detection failed:", e instanceof Error ? e.message : e);
     return { detected: false, thumbPaths };
