@@ -45,10 +45,9 @@ export default function SettingsPage() {
                 cron-job.org
               </a>
             </p>
-            <div className="bg-muted p-3 rounded-lg font-mono text-xs">
-              <p>URL: https://your-domain.vercel.app/api/pipeline/run</p>
-              <p>Method: POST</p>
-              <p>Schedule: Daily (e.g., 08:00 AM)</p>
+            <div className="bg-muted p-3 rounded-lg font-mono text-xs space-y-1">
+              <p>Pipeline: POST /api/pipeline/run → 11:00 น.</p>
+              <p>Wake: GET / → 10:25 น. และ 10:55 น.</p>
             </div>
           </CardContent>
         </Card>
